@@ -69,7 +69,7 @@ for chapter in $STARTSTOP ; do
         startTime=$(jq .chapters[$begin].start_time $WIP/chapters.json | sed 's/\"//g')
         endTime=$(jq .chapters[$end].end_time $WIP/chapters.json | sed 's/\"//g')
         ffmpeg \
-                -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 -y -hide_banner -stats -fflags genpts \
+                -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 -y -hide_banner -stats -fflags genpts -loglevel error \
                 -init_hw_device qsv=qs@va \
                 -filter_hw_device qs \
                 -hwaccel qsv \
@@ -100,7 +100,7 @@ buildAudioMapping () {
 		MAPPING_COMMAND="$MAPPING_COMMAND -map $i:a "
 		i=$(echo $i + 1 |bc)
 	done
-	ffmpeg -y -fflags genpts $AUDIO_COMMAND $MAPPING_COMMAND -c:a copy $WIP/audio.mka
+	ffmpeg -y -fflags genpts -hide_banner -loglevel error -stats $AUDIO_COMMAND $MAPPING_COMMAND -c:a copy $WIP/audio.mka
 }
 
 # Converts audio to FLAC or vorbis.  Lossless codecs will be converted to FLAC, everything else vorbis.
@@ -146,13 +146,13 @@ fossAudioConversion () {
                 codec=$(echo $transcodeList | awk -F ':' '{print $2}')
 
                 if [ "$codec" = "vorbis" ]; then
-                        echo "ffmpeg -y -i \"`echo $INPUTFILE`\" -c:a libvorbis -q:a 6 -sample_fmt fltp -map 0:$index $WIP/track_$index.mka" >> $PARALLEL
+                        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"`echo $INPUTFILE`\" -c:a libvorbis -q:a 6 -sample_fmt fltp -map 0:$index $WIP/track_$index.mka" >> $PARALLEL
                 else
-                        echo "ffmpeg -y -i \"`echo $INPUTFILE`\" -c:a flac -sample_fmt s32 -map 0:$index $WIP/track_$index.mka" >> $PARALLEL
+                        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"`echo $INPUTFILE`\" -c:a flac -sample_fmt s32 -map 0:$index $WIP/track_$index.mka" >> $PARALLEL
                 fi
         done
 
-        echo "ffmpeg -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
+        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
 
 	processParallelTasks
 }
@@ -165,7 +165,7 @@ for chapter in $STARTSTOP ; do
 	outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-audioOnly.mkv/g")
 	startTime=$(jq .chapters[$begin].start_time $WIP/chapters.json | sed 's/\"//g')
 	endTime=$(jq .chapters[$end].end_time $WIP/chapters.json | sed 's/\"//g')
-	ffmpeg -y -fflags genpts \
+	ffmpeg -y -fflags genpts -hide_banner -loglevel error -stats \
 		-i "$INPUTFILE" -i "$WIP/audio.mka" -i "$WIP/subtitles.mkv" \
 		-ss $startTime \
 		-to $endTime \
@@ -258,10 +258,10 @@ generateFilters () {
 # Converts Dolby Vision to HDR10 by removing the DV side channel.  Leaves the BT2020 video as is.
 convertDolbyVision () {
         # Extracts the video and discards the DV side channel data
-	ffmpeg -y -i "$INPUTFILE" -dn -c:v copy -vbsf hevc_mp4toannexb -f hevc - | \
+	ffmpeg -y -hide_banner -loglevel error -stats -i "$INPUTFILE" -dn -c:v copy -vbsf hevc_mp4toannexb -f hevc - | \
 		dovi_tool remove - -o $WIP/video.hevc
         # Takes the HEVC stream and inserts into MP4 container
-        echo "ffmpeg -y -fflags genpts -i $WIP/video.hevc -c:v copy $WIP/video.mp4" >> $PARALLEL
+        echo "ffmpeg -hide_banner -loglevel error -stats -y -fflags genpts -i $WIP/video.hevc -c:v copy $WIP/video.mp4" >> $PARALLEL
 
         # Creates final input file parameters and mapping
         INPUT_LIST="-i $WIP/video.mp4 -i $WIP/audio.mka -i $WIP/subtitles.mkv"
@@ -276,8 +276,8 @@ processParallelTasks () {
 
 # Only performs language selection
 processAudioSubs () {
-	echo "ffmpeg -y -i \"$INPUTFILE\" -vn -sn -c:a copy $LANG_OPTIONS $WIP/audio.mka" >> $PARALLEL
-	echo "ffmpeg -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
+	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -sn -c:a copy $LANG_OPTIONS $WIP/audio.mka" >> $PARALLEL
+	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
 }
 
 # Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
