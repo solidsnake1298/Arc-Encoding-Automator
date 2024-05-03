@@ -32,7 +32,6 @@ FILTERS=""
 INPUT_LIST=""
 MAPPING=""
 
-
 # Reads input paramamters
 while getopts i:c:d:a:r:f:s:e:o: option; do
         case $option in
@@ -56,53 +55,6 @@ if [ -z "$INPUTFILE" ]; then
         exit 1
 fi
 
-# Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
-LANG_OPTIONS="" 
-if [ $ANIME -eq 1 ]; then
-        LANG_OPTIONS="-map 0:m:language:eng? -map 0:m:language:jpn?"
-else
-        LANG_OPTIONS="-map 0:m:language:eng?"
-fi
-
-# If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
-# the function.  Otherwise the entire file will be processed.
-splitEpisodes $CHAPTEREPISODE
-
-# Analyzes video, generates crop, deinterlace, video quality, rescaling parameters for insertion in vpp_qsv filter.
-generateFilters
-
-# If the -f 1 option is used, all audio tracks will be converted to FOSS audio codecs
-# Lossless codecs will be converted to FLAC. Lossy codecs will be converted to vorbis.
-
-if [ $FOSS -eq 1 ]; then
-	fossAudioConversion
-else
-	processAudioSubs
-fi
-
-#######################
-# If -d 1 option is used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just extract audio and subtitles and perform language selection.
-# Also creates final input file and mapping parameters
-if [ $DV -eq 1 ]; then
-	convertDolbyVision
-else
-        INPUT_LIST="-i $WIP/audio.mka -i $WIP/subtitles.mkv"
-        MAPPING="-map 0:v -map 1:a -map 2:s? -map 0:t?"
-fi
-
-# Processes tasks queued up in PARALLEL
-processParallelTasks
-
-# Iterates through chapter list
-if [ $CONVERTAUDIO -eq 1 ]; then
-	convertAudioOnly
-else
-	av1Encode
-fi
-
-# WIP cleanup
-rm -f $WIP/*
-
 av1Encode () {
 for chapter in $STARTSTOP ; do
         begin=$(echo $chapter | awk -F ':' '{print $1}')
@@ -115,7 +67,7 @@ for chapter in $STARTSTOP ; do
         startTime=$(jq .chapters[$begin].start_time $WIP/chapters.json | sed 's/\"//g')
         endTime=$(jq .chapters[$end].end_time $WIP/chapters.json | sed 's/\"//g')
         ffmpeg \
-                -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 -y -hide_banner -stats \
+                -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 -y -hide_banner -stats -fflags genpts \
                 -init_hw_device qsv=qs@va \
                 -filter_hw_device qs \
                 -hwaccel qsv \
@@ -178,9 +130,8 @@ fossAudioConversion () {
 
         cat $WIP/transcodeaudio.txt | while read inputCodec; do
                 index=$(echo $inputCodec | awk -F ':' '{print $1}')
-                codec=$(echo $inputCodec | awk -F ':' '{print $2}')
-                losslessCodec=$(echo $codec | egrep -i "truehd|true hd|dts-hd ma|dts-hd")
-                if [ -z "$losslessCodec" ]; then
+                codec=$(echo $inputCodec | awk -F ':' '{print $2}' | tr '[:upper:]' '[:lower:]')
+		if [ -z "`echo $codec | egrep -i 'truehd|true hd|dts-hd ma|dts-hd'`" ]; then
                         outputCodec="vorbis"
                 else
                         outputCodec="flac"
@@ -200,14 +151,19 @@ fossAudioConversion () {
         done
 
         echo "ffmpeg -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
+
+	processParallelTasks
 }
 
 convertAudioOnly () {
+for chapter in $STARTSTOP ; do
+        begin=$(echo $chapter | awk -F ':' '{print $1}')
+        end=$(echo $chapter | awk -F ':' '{print $2}')
 	outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-audioOnly.mkv/g")
 	startTime=$(jq .chapters[$begin].start_time $WIP/chapters.json | sed 's/\"//g')
 	endTime=$(jq .chapters[$end].end_time $WIP/chapters.json | sed 's/\"//g')
 	ffmpeg -y -fflags genpts \
-		-i $INPUTFILE -i $WIP/audio.mka -i $WIP/subtitles.mkv \
+		-i "$INPUTFILE" -i "$WIP/audio.mka" -i "$WIP/subtitles.mkv" \
 		-ss $startTime \
 		-to $endTime \
 		-map_chapters 0 \
@@ -218,7 +174,8 @@ convertAudioOnly () {
 		-c:v copy \
 		-c:a copy \
 		-c:s copy \
-		$outputFile
+		"$outputFile"
+done
 }
 
 splitEpisodes () {
@@ -308,9 +265,57 @@ convertDolbyVision () {
 
 processParallelTasks () {
 	cat $PARALLEL | parallel -j 6 --verbose '{}'
+	cat /dev/null > $PARALLEL
 }
 
 processAudioSubs () {
 	echo "ffmpeg -y -i \"$INPUTFILE\" -vn -sn -c:a copy $LANG_OPTIONS $WIP/audio.mka" >> $PARALLEL
 	echo "ffmpeg -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
 }
+
+# Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
+LANG_OPTIONS="" 
+if [ $ANIME -eq 1 ]; then
+        LANG_OPTIONS="-map 0:m:language:eng? -map 0:m:language:jpn?"
+else
+        LANG_OPTIONS="-map 0:m:language:eng?"
+fi
+
+# If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
+# the function.  Otherwise the entire file will be processed.
+splitEpisodes $CHAPTEREPISODE
+
+# Analyzes video, generates crop, deinterlace, video quality, rescaling parameters for insertion in vpp_qsv filter.
+generateFilters
+
+# If the -f 1 option is used, all audio tracks will be converted to FOSS audio codecs
+# Lossless codecs will be converted to FLAC. Lossy codecs will be converted to vorbis.
+
+if [ $FOSS -eq 1 ]; then
+        fossAudioConversion
+	buildAudioMapping
+else
+        processAudioSubs
+fi
+
+# If -d 1 option is used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just extract audio and subtitles and perform language selection.
+# Also creates final input file and mapping parameters
+if [ $DV -eq 1 ] && [ $CONVERTAUDIO -eq 0 ]; then
+        convertDolbyVision
+else
+        INPUT_LIST="-i $WIP/audio.mka -i $WIP/subtitles.mkv"
+        MAPPING="-map 0:v -map 1:a -map 2:s? -map 0:t?"
+fi
+
+# Processes tasks queued up in PARALLEL
+processParallelTasks
+
+# Iterates through chapter list
+if [ $CONVERTAUDIO -eq 1 ]; then
+        convertAudioOnly
+else
+        av1Encode
+fi
+
+# WIP cleanup
+rm -f $WIP/*
