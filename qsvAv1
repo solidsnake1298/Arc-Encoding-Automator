@@ -1,0 +1,263 @@
+#!/bin/bash
+
+# Debug output
+set -ex
+
+###########################
+# Assumes jellyfin-ffmpeg is installed and symlinked in /usr/bin.
+# May work with vanilla ffmpeg, but may require additional Intel drivers.
+# Must have parallel, jq, and bc installed.
+# User running this script must be in render group.  Requires user logout if added to group.
+##########################
+
+INPUTFILE=""
+CHAPTERSEPISODE="all"
+DV=0
+ANIME=0
+RESCALE=0
+FOSS=0
+WIP=/media/library/wip
+mkdir -p $WIP
+rm -f $WIP/*
+
+# Reads input paramamters
+while getopts i:c:d:a:r:f: option; do
+        case $option in
+                i) INPUTFILE=${OPTARG};;
+                c) CHAPTERSEPISODE=${OPTARG};;
+                d) DV=${OPTARG};;
+                a) ANIME=${OPTARG};;
+                r) RESCALE=${OPTARG};;
+                f) FOSS=${OPTARG};;
+               \?) echo "Invalid option"
+                   exit;;
+        esac
+done
+
+# Checks for required input file name
+if [ -z "$INPUTFILE" ]; then
+        echo "No input file was provided."
+        exit 1
+fi
+
+buildAudioMapping () {
+        i=0
+        for file in `ls $WIP/track_*.mka`; do
+                AUDIO_COMMAND="$AUDIO_COMMAND -i $file "
+                MAPPING_COMMAND="$MAPPING_COMMAND -map $i:a "
+                i=$(echo $i + 1 |bc)
+        done
+        ffmpeg -y -fflags genpts $AUDIO_COMMAND $MAPPING_COMMAND -c:a copy $WIP/audio.mka < /dev/null
+}
+
+# Probes videos for chapter information and prints to text file
+ffprobe -i "$INPUTFILE" -print_format json -show_chapters -loglevel error > $WIP/chapters.json
+
+# Parses json file for the start time of each chapter.  Also counts number of chapters
+RAWCHAPTERS=$(jq .chapters[].start_time $WIP/chapters.json | wc -l)
+# ffmpeg chapters start at zero.  Subtracting 1 to align with last chapter.
+TOTALCHAPTERS=$(echo $(($RAWCHAPTERS - 1)) | bc)
+
+i=0
+STARTSTOP=""
+# If no chapter count was provided, output file contains all episodes.  Otherwise, builds a colon separated
+# list of chapter start:end
+if [ "$CHAPTERSEPISODE" == "all" ]; then
+        STARTSTOP="0:$TOTALCHAPTERS"
+else
+        while [ $i -le $TOTALCHAPTERS ]; do
+                first=$i
+                last=$(echo $(($i + $CHAPTERSEPISODE - 1)) | bc)
+                STARTSTOP=$(echo "$STARTSTOP $first:$last")
+                i=$(echo $(($i + $CHAPTERSEPISODE)) | bc)
+        done
+fi
+
+# Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
+LANG_OPTIONS=""
+FOSS_OPTIONS=""
+if [ $ANIME -eq 1 ]; then
+        LANG_OPTIONS="-map 0:m:language:eng? -map 0:m:language:jpn?"
+else
+        LANG_OPTIONS="-map 0:m:language:eng?"
+fi
+
+########################
+# If the -f 1 option is used, all audio tracks will be converted to FOSS audio codecs
+# Lossless codecs will be converted to FLAC.
+# Lossy codecs will be converted to vorbia.
+
+PARALLEL=$WIP/parallel.txt
+AUDIO_COMMAND=""
+MAPPING_COMMAND=""
+
+if [ $FOSS -eq 1 ]; then
+        if [ $ANIME -eq 1 ]; then
+                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[] | select((.tags.language == ("eng") or .tags.language == ("jpn")))]' > $WIP/audio.json
+        else
+                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[] | select((.tags.language == ("eng")))]' > $WIP/audio.json
+        fi
+
+        i=0
+        cat /dev/null > $WIP/transcodeaudio.txt
+
+        jq '.[].index' $WIP/audio.json | while read rawIndex; do 
+                codec=$(jq --arg l $i '.[$l|fromjson].profile' $WIP/audio.json)
+
+                if [ "$codec" = "null" ]; then
+                        codec=$(jq --arg l $i '.[$l|fromjson].codec_name' $WIP/audio.json)
+                fi
+
+                index=$(echo $(( $rawIndex - 1 | bc)))
+                echo "$rawIndex:$codec" >> $WIP/transcodeaudio.txt
+                i=$(echo $i + 1 |bc)
+        done
+
+        cat /dev/null > $WIP/outputcodecs.txt
+
+        cat $WIP/transcodeaudio.txt | while read inputCodec; do
+                losslessCodec=""
+                index=$(echo $inputCodec | awk -F ':' '{print $1}')
+                codec=$(echo $inputCodec | awk -F ':' '{print $2}')
+                #losslessCodec=$(echo $codec | egrep -i "truehd|true hd|dts-hd ma|dts-hd")
+                if [ -z "`echo $codec | egrep -i 'truehd|true hd|dts-hd ma|dts-hd'`" ]; then
+                        outputCodec="vorbis"
+                else
+                        outputCodec="flac"
+                fi
+                echo "$index:$outputCodec" >> $WIP/outputcodecs.txt
+        done
+        cat /dev/null > $PARALLEL
+        cat $WIP/outputcodecs.txt | while read transcodeList ; do
+                index=$(echo $transcodeList | awk -F ':' '{print $1}')
+                codec=$(echo $transcodeList | awk -F ':' '{print $2}')
+
+                if [ "$codec" = "vorbis" ]; then
+                        echo "ffmpeg -y -i \"`echo $INPUTFILE`\" -c:a libvorbis -q:a 6 -sample_fmt fltp -map 0:$index $WIP/track_$index.mka" >> $PARALLEL
+                else
+                        echo "ffmpeg -y -i \"`echo $INPUTFILE`\" -c:a flac -sample_fmt s32 -map 0:$index $WIP/track_$index.mka" >> $PARALLEL
+                fi
+        done
+
+        echo "ffmpeg -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
+
+fi
+
+# If -d option used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just extract audio and subtitles and perform language selection.
+# Also creates final input file and mapping parameters
+INPUT_LIST=""
+MAPPING=""
+if [ $DV -eq 1 ]; then
+        # Extracts the video and discards the DV side channel data
+        ffmpeg -y -i "$INPUTFILE" -dn -c:v copy -vbsf hevc_mp4toannexb -f hevc - | dovi_tool remove - -o $WIP/video.hevc
+
+        # Takes the HEVC stream and inserts into MP4 container
+        echo "ffmpeg -y -fflags genpts -i $WIP/video.hevc -c:v copy $WIP/video.mp4" >> $PARALLEL
+
+        if [ $FOSS -eq 0 ]; then
+                # Extracts audio and selects tracks
+                echo "ffmpeg -y -i \"$INPUTFILE\" -vn -sn -c:a copy $LANG_OPTIONS $WIP/audio.mka" >> $PARALLEL
+                echo "ffmpeg -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
+                cat $PARALLEL | parallel -j 6 --verbose '{}'
+        else
+                cat $PARALLEL | parallel -j 6 --verbose '{}'
+                buildAudioMapping
+        fi
+        # Creates final input file parameters and mapping
+        INPUT_LIST="-i $WIP/video.mp4 -i $WIP/audio.mka -i $WIP/subtitles.mkv"
+        MAPPING="-map 1:v -map 2:a -map 3:s? -map 0:t?"
+else
+        if [ $FOSS -eq 0 ]; then
+                echo "ffmpeg -y -i \"$INPUTFILE\" -vn -sn -c:a copy $LANG_OPTIONS $WIP/audio.mka" >> $PARALLEL
+                echo "ffmpeg -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
+                cat $PARALLEL | parallel -j 6 --verbose '{}'
+        else
+                cat $PARALLEL | parallel -j 6 --verbose '{}'
+                buildAudioMapping
+        fi
+        INPUT_LIST="-i $WIP/audio.mka -i $WIP/subtitles.mkv"
+        MAPPING="-map 0:v -map 1:a -map 2:s? -map 0:t?"
+fi
+
+# ffprobe to determine if interlaced.  If yes, set yadif deinterlace filter.
+RAWPARAMS=$(ffprobe -i "$INPUTFILE" -select_streams v:0  -show_entries stream=width,height,field_order)
+INTERLACED=$(echo $RAWPARAMS | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}')
+DEINTERLACED=""
+
+case $INTERLACED in
+        tt) DEINTERLACED="deinterlace=2";;
+        bb) DEINTERLACED="deinterlace=2";;
+        tb) DEINTERLACED="deinterlace=2";;
+        bt) DEINTERLACED="deinterlace=2";;
+        *) DEINTERLACED="deinterlace=0";;
+esac
+
+# ffmpeg to detect black bars for cropping.
+#RAWCROP=$(ffmpeg -ss 250 -to 260 -i "$INPUTFILE" -vf cropdetect=16:4:0,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+RAWCROP=$(ffmpeg -ss 250 -to 260 -i "$INPUTFILE" -vf cropdetect=mode=black,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+
+W=$(echo $RAWCROP | awk -F ":" '{print $1}')
+H=$(echo $RAWCROP | awk -F ":" '{print $2}')
+X=$(echo $RAWCROP | awk -F ":" '{print $3}')
+Y=$(echo $RAWCROP | awk -F ":" '{print $4}')
+
+# If 1080p or higher, quality is set to 26.  If lower, quality is set to 30
+if [ $W -lt 1300 ]; then
+        quality=30
+else
+        quality=26
+fi
+
+# Combines crop and deterinterlace filters.  Always present.
+CROPPARAMS="$DEINTERLACED:cw=$W:ch=$H:cx=$X:cy=$Y:async_depth=4"
+
+# Sets rescaling options when option used.  Otherwise null.
+if [ $RESCALE -eq 1 ]; then
+        RESCALEPARAMS=";scale_qsv=w=1920:h=-1"
+elif [ $RESCALE -eq 2 ]; then
+        RESCALEPARAMS=";scale_qsv=w=640:h=480"
+elif [ $RESCALE -eq 3 ]; then
+        RESCALEPARAMS=";scale_qsv=w=720:h=480"
+else
+        RESCALEPARAMS=""
+fi
+
+# Combines filters
+FILTERS="`echo $CROPPARAMS``echo $RESCALEPARAMS`"
+
+# Iterates through chapter list
+for chapter in $STARTSTOP ; do
+        begin=$(echo $chapter | awk -F ':' '{print $1}')
+        end=$(echo $chapter | awk -F ':' '{print $2}')
+        if [ "$CHAPTERSEPISODE" == "all" ]; then
+                outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-all.mkv/g")
+        else
+                outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-chapter-$begin-$end.mkv/g")
+        fi
+        startTime=$(jq .chapters[$begin].start_time $WIP/chapters.json | sed 's/\"//g')
+        endTime=$(jq .chapters[$end].end_time $WIP/chapters.json | sed 's/\"//g')
+        ffmpeg \
+                -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 -y -hide_banner -stats \
+                -init_hw_device qsv=qs@va \
+                -filter_hw_device qs \
+                -hwaccel qsv \
+                -hwaccel_output_format qsv \
+                -i "$INPUTFILE" \
+                $INPUT_LIST \
+                -ss $startTime \
+                -to $endTime \
+                -map_chapters 0 \
+                $MAPPING \
+                -c:v av1_qsv \
+                -preset veryslow \
+                -vf vpp_qsv="$FILTERS" \
+                -c:a copy \
+                -c:s copy \
+                -global_quality:v $quality \
+                -look_ahead 1 \
+                -look_ahead_depth 100 \
+                "$outputFile" < /dev/null
+done
+
+# WIP cleanup
+rm -f $WIP/*
