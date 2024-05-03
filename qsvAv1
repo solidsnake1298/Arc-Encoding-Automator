@@ -10,6 +10,7 @@ set -ex
 # User running this script must be in render group.  Requires user logout if added to group.
 ##########################
 
+# Variable initialization.  Work-in-progress initialization and cleanup.
 INPUTFILE=""
 CHAPTERSEPISODE="all"
 DV=0
@@ -19,11 +20,16 @@ FOSS=0
 WIP=/media/library/wip
 mkdir -p $WIP
 rm -f $WIP/*
-cat /dev/null > $PARALLEL
 PARALLEL=$WIP/parallel.txt
+cat /dev/null > $PARALLEL
+AUDIO_COMMAND=""
+MAPPING_COMMAND=""
+SEASONNUM=""
+EPISODESTART=""
+CONVERTAUDIO=0
 
 # Reads input paramamters
-while getopts i:c:d:a:r:f: option; do
+while getopts i:c:d:a:r:f:s:e:o: option; do
         case $option in
                 i) INPUTFILE=${OPTARG};;
                 c) CHAPTERSEPISODE=${OPTARG};;
@@ -31,6 +37,9 @@ while getopts i:c:d:a:r:f: option; do
                 a) ANIME=${OPTARG};;
                 r) RESCALE=${OPTARG};;
                 f) FOSS=${OPTARG};;
+		s) SEASONNUM=${OPTARG};;
+		e) EPISODESTART=${OPTARG};;
+		o) CONVERTAUDIO=${OPTARG};;
                \?) echo "Invalid option"
                    exit;;
         esac
@@ -40,6 +49,14 @@ done
 if [ -z "$INPUTFILE" ]; then
         echo "No input file was provided."
         exit 1
+fi
+
+# Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
+LANG_OPTIONS="" 
+if [ $ANIME -eq 1 ]; then
+        LANG_OPTIONS="-map 0:m:language:eng? -map 0:m:language:jpn?"
+else
+        LANG_OPTIONS="-map 0:m:language:eng?"
 fi
 
 # Probes videos for chapter information and prints to text file
@@ -65,76 +82,17 @@ else
         done
 fi
 
-# Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
-LANG_OPTIONS=""
-FOSS_OPTIONS=""
-if [ $ANIME -eq 1 ]; then
-        LANG_OPTIONS="-map 0:m:language:eng? -map 0:m:language:jpn?"
-else
-        LANG_OPTIONS="-map 0:m:language:eng?"
-fi
-
 ########################
 # If the -f 1 option is used, all audio tracks will be converted to FOSS audio codecs
 # Lossless codecs will be converted to FLAC.
 # Lossy codecs will be converted to vorbia.
 
-AUDIO_COMMAND=""
-MAPPING_COMMAND=""
-
 if [ $FOSS -eq 1 ]; then
-        if [ $ANIME -eq 1 ]; then
-                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[] | select((.tags.language == ("eng") or .tags.language == ("jpn")))]' > $WIP/audio.json
-        else
-                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[] | select((.tags.language == ("eng")))]' > $WIP/audio.json
-        fi
-
-        i=0
-        cat /dev/null > $WIP/transcodeaudio.txt
-
-        jq '.[].index' $WIP/audio.json | while read rawIndex; do 
-                codec=$(jq --arg l $i '.[$l|fromjson].profile' $WIP/audio.json)
-
-                if [ "$codec" = "null" ]; then
-                        codec=$(jq --arg l $i '.[$l|fromjson].codec_name' $WIP/audio.json)
-                fi
-
-                index=$(echo $(( $rawIndex - 1 | bc)))
-                echo "$rawIndex:$codec" >> $WIP/transcodeaudio.txt
-                i=$(echo $i + 1 |bc)
-        done
-
-        cat /dev/null > $WIP/outputcodecs.txt
-
-        cat $WIP/transcodeaudio.txt | while read inputCodec; do
-                losslessCodec=""
-                index=$(echo $inputCodec | awk -F ':' '{print $1}')
-                codec=$(echo $inputCodec | awk -F ':' '{print $2}')
-                #losslessCodec=$(echo $codec | egrep -i "truehd|true hd|dts-hd ma|dts-hd")
-                if [ -z "`echo $codec | egrep -i 'truehd|true hd|dts-hd ma|dts-hd'`" ]; then
-                        outputCodec="vorbis"
-                else
-                        outputCodec="flac"
-                fi
-                echo "$index:$outputCodec" >> $WIP/outputcodecs.txt
-        done
-        cat /dev/null > $PARALLEL
-        cat $WIP/outputcodecs.txt | while read transcodeList ; do
-                index=$(echo $transcodeList | awk -F ':' '{print $1}')
-                codec=$(echo $transcodeList | awk -F ':' '{print $2}')
-
-                if [ "$codec" = "vorbis" ]; then
-                        echo "ffmpeg -y -i \"`echo $INPUTFILE`\" -c:a libvorbis -q:a 6 -sample_fmt fltp -map 0:$index $WIP/track_$index.mka" >> $PARALLEL
-                else
-                        echo "ffmpeg -y -i \"`echo $INPUTFILE`\" -c:a flac -sample_fmt s32 -map 0:$index $WIP/track_$index.mka" >> $PARALLEL
-                fi
-        done
-
-        echo "ffmpeg -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
-
+	fossAudioConversion
 fi
 
-# If -d option used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just extract audio and subtitles and perform language selection.
+#######################
+# If -d 1 option is used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just extract audio and subtitles and perform language selection.
 # Also creates final input file and mapping parameters
 INPUT_LIST=""
 MAPPING=""
@@ -247,29 +205,31 @@ for chapter in $STARTSTOP ; do
                 -global_quality:v $quality \
                 -look_ahead 1 \
                 -look_ahead_depth 100 \
-                "$outputFile" < /dev/null
+                "$outputFile"
 done
 
 # WIP cleanup
 rm -f $WIP/*
 
-
-# During FOSS audio converion
+# During FOSS audio conversion, audio tracks are extracted and need to be re-muxed for easier insertion into the final video
 buildAudioMapping () {
-  i=0     
-  for file in `ls $WIP/track_*.mka`; do
-    AUDIO_COMMAND="$AUDIO_COMMAND -i $file "
-    MAPPING_COMMAND="$MAPPING_COMMAND -map $i:a "
-    i=$(echo $i + 1 |bc)
-  done
-  ffmpeg -y -fflags genpts $AUDIO_COMMAND $MAPPING_COMMAND -c:a copy $WIP/audio.mka < /dev/null
+	i=0     
+	for file in `ls $WIP/track_*.mka`; do
+		AUDIO_COMMAND="$AUDIO_COMMAND -i $file "
+		MAPPING_COMMAND="$MAPPING_COMMAND -map $i:a "
+		i=$(echo $i + 1 |bc)
+	done
+	ffmpeg -y -fflags genpts $AUDIO_COMMAND $MAPPING_COMMAND -c:a copy $WIP/audio.mka
 }
 
+# Converts audio to FLAC or vorbis.  Lossless codecs will be converted to FLAC, everything else vorbis.
 fossAudioConversion () {
 	if [ $ANIME -eq 1 ]; then
-                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[] | select((.tags.language == ("eng") or .tags.language == ("jpn")))]' > $WIP/audio.json
+                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
+			jq '[.streams[] | select((.tags.language == ("eng") or .tags.language == ("jpn")))]' > $WIP/audio.json
         else
-                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[] | select((.tags.language == ("eng")))]' > $WIP/audio.json
+                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
+			jq '[.streams[] | select((.tags.language == ("eng")))]' > $WIP/audio.json
         fi
 
         i=0
@@ -290,17 +250,17 @@ fossAudioConversion () {
         cat /dev/null > $WIP/outputcodecs.txt
 
         cat $WIP/transcodeaudio.txt | while read inputCodec; do
-                losslessCodec=""
                 index=$(echo $inputCodec | awk -F ':' '{print $1}')
                 codec=$(echo $inputCodec | awk -F ':' '{print $2}')
-                #losslessCodec=$(echo $codec | egrep -i "truehd|true hd|dts-hd ma|dts-hd")
-                if [ -z "`echo $codec | egrep -i 'truehd|true hd|dts-hd ma|dts-hd'`" ]; then
+                losslessCodec=$(echo $codec | egrep -i "truehd|true hd|dts-hd ma|dts-hd")
+                if [ -z "$losslessCodec" ]; then
                         outputCodec="vorbis"
                 else
                         outputCodec="flac"
                 fi
                 echo "$index:$outputCodec" >> $WIP/outputcodecs.txt
-        done    
+        done
+
         cat $WIP/outputcodecs.txt | while read transcodeList ; do
                 index=$(echo $transcodeList | awk -F ':' '{print $1}')
                 codec=$(echo $transcodeList | awk -F ':' '{print $2}')
@@ -313,4 +273,23 @@ fossAudioConversion () {
         done
 
         echo "ffmpeg -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
+}
+
+convertAudioOnly () {
+	outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-audioOnly.mkv/g")
+	startTime=$(jq .chapters[$begin].start_time $WIP/chapters.json | sed 's/\"//g')
+	endTime=$(jq .chapters[$end].end_time $WIP/chapters.json | sed 's/\"//g')
+	ffmpeg -y -fflags genpts \
+		-i $INPUTFILE -i $WIP/audio.mka -i $WIP/subtitles.mkv \
+		-ss $startTime \
+		-to $endTime \
+		-map_chapters 0 \
+		-map 0:v \
+		-map 1:a \
+		-map 2:s \
+		-map 0:t? \
+		-c:v copy \
+		-c:a copy \
+		-c:s copy \
+		$outputFile
 }
