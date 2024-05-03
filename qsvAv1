@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debug output
-set -ex
+#set -ex
 
 ###########################
 # Assumes jellyfin-ffmpeg is installed and symlinked in /usr/bin.
@@ -55,6 +55,8 @@ if [ -z "$INPUTFILE" ]; then
         exit 1
 fi
 
+# Uses Intel QSV to encode the original or DV converted video to AV1.  Muxes in the converted and/or language selected audio and subtitles.
+# Includes attachments if present.  If splitting out episodes from a MKV that came off the disc as a single file, it will loop through for each episode.
 av1Encode () {
 for chapter in $STARTSTOP ; do
         begin=$(echo $chapter | awk -F ':' '{print $1}')
@@ -155,6 +157,7 @@ fossAudioConversion () {
 	processParallelTasks
 }
 
+# Remuxes new audio with original video
 convertAudioOnly () {
 for chapter in $STARTSTOP ; do
         begin=$(echo $chapter | awk -F ':' '{print $1}')
@@ -204,6 +207,7 @@ splitEpisodes () {
 	fi
 }
 
+# Generates video filters for vpp_qsv
 generateFilters () {
 	# ffprobe to determine if interlaced.  If yes, set yadif deinterlace filter.
 	rawParams=$(ffprobe -i "$INPUTFILE" -select_streams v:0  -show_entries stream=width,height,field_order)
@@ -251,6 +255,7 @@ generateFilters () {
 	FILTERS="`echo $cropParams``echo $rescaleParams`"
 }
 
+# Converts Dolby Vision to HDR10 by removing the DV side channel.  Leaves the BT2020 video as is.
 convertDolbyVision () {
         # Extracts the video and discards the DV side channel data
 	ffmpeg -y -i "$INPUTFILE" -dn -c:v copy -vbsf hevc_mp4toannexb -f hevc - | \
@@ -263,11 +268,13 @@ convertDolbyVision () {
         MAPPING="-map 1:v -map 2:a -map 3:s? -map 0:t?"
 }
 
+# Runs all tasks in the parallel text file, 6 at a time
 processParallelTasks () {
 	cat $PARALLEL | parallel -j 6 --verbose '{}'
 	cat /dev/null > $PARALLEL
 }
 
+# Only performs language selection
 processAudioSubs () {
 	echo "ffmpeg -y -i \"$INPUTFILE\" -vn -sn -c:a copy $LANG_OPTIONS $WIP/audio.mka" >> $PARALLEL
 	echo "ffmpeg -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
@@ -276,46 +283,59 @@ processAudioSubs () {
 # Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
 LANG_OPTIONS="" 
 if [ $ANIME -eq 1 ]; then
+	echo "Selecting English and Japanese audio/subtitle tracks."
         LANG_OPTIONS="-map 0:m:language:eng? -map 0:m:language:jpn?"
 else
+	echo "Selecting English audio/subtitle tracks."
         LANG_OPTIONS="-map 0:m:language:eng?"
 fi
 
 # If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
 # the function.  Otherwise the entire file will be processed.
+echo "Generating chapter start/stop times."
 splitEpisodes $CHAPTEREPISODE
 
 # Analyzes video, generates crop, deinterlace, video quality, rescaling parameters for insertion in vpp_qsv filter.
+echo "Generating video filter parameters."
 generateFilters
 
 # If the -f 1 option is used, all audio tracks will be converted to FOSS audio codecs
 # Lossless codecs will be converted to FLAC. Lossy codecs will be converted to vorbis.
 
 if [ $FOSS -eq 1 ]; then
+	echo "Converting audio to FLAC/Vorbis.  Performing audio/sub language selection."
         fossAudioConversion
 	buildAudioMapping
 else
+	echo "Performing audio/sub language selection."
         processAudioSubs
 fi
 
 # If -d 1 option is used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just extract audio and subtitles and perform language selection.
 # Also creates final input file and mapping parameters
 if [ $DV -eq 1 ] && [ $CONVERTAUDIO -eq 0 ]; then
+	echo "Converting Dolby Vision to HDR10."
         convertDolbyVision
+	echo "Generating final input list and mappings."
 else
+	echo "Generating final input list and mappings."
         INPUT_LIST="-i $WIP/audio.mka -i $WIP/subtitles.mkv"
         MAPPING="-map 0:v -map 1:a -map 2:s? -map 0:t?"
 fi
 
 # Processes tasks queued up in PARALLEL
+echo "Processing queued parallel tasks"
 processParallelTasks
 
 # Iterates through chapter list
-if [ $CONVERTAUDIO -eq 1 ]; then
+if [ $CONVERTAUDIO -eq 1 ] && [ $FOSS -eq 1 ] ; then
+	echo "Muxing new audio with original video."
         convertAudioOnly
 else
+	echo "Muxing audio with new AV1 video."
         av1Encode
 fi
 
 # WIP cleanup
+echo "Cleaning up WIP folder."
 rm -f $WIP/*
