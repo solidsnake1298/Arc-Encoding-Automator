@@ -19,6 +19,8 @@ FOSS=0
 WIP=/media/library/wip
 mkdir -p $WIP
 rm -f $WIP/*
+cat /dev/null > $PARALLEL
+PARALLEL=$WIP/parallel.txt
 
 # Reads input paramamters
 while getopts i:c:d:a:r:f: option; do
@@ -39,16 +41,6 @@ if [ -z "$INPUTFILE" ]; then
         echo "No input file was provided."
         exit 1
 fi
-
-buildAudioMapping () {
-        i=0
-        for file in `ls $WIP/track_*.mka`; do
-                AUDIO_COMMAND="$AUDIO_COMMAND -i $file "
-                MAPPING_COMMAND="$MAPPING_COMMAND -map $i:a "
-                i=$(echo $i + 1 |bc)
-        done
-        ffmpeg -y -fflags genpts $AUDIO_COMMAND $MAPPING_COMMAND -c:a copy $WIP/audio.mka < /dev/null
-}
 
 # Probes videos for chapter information and prints to text file
 ffprobe -i "$INPUTFILE" -print_format json -show_chapters -loglevel error > $WIP/chapters.json
@@ -87,7 +79,6 @@ fi
 # Lossless codecs will be converted to FLAC.
 # Lossy codecs will be converted to vorbia.
 
-PARALLEL=$WIP/parallel.txt
 AUDIO_COMMAND=""
 MAPPING_COMMAND=""
 
@@ -261,3 +252,65 @@ done
 
 # WIP cleanup
 rm -f $WIP/*
+
+
+# During FOSS audio converion
+buildAudioMapping () {
+  i=0     
+  for file in `ls $WIP/track_*.mka`; do
+    AUDIO_COMMAND="$AUDIO_COMMAND -i $file "
+    MAPPING_COMMAND="$MAPPING_COMMAND -map $i:a "
+    i=$(echo $i + 1 |bc)
+  done
+  ffmpeg -y -fflags genpts $AUDIO_COMMAND $MAPPING_COMMAND -c:a copy $WIP/audio.mka < /dev/null
+}
+
+fossAudioConversion () {
+	if [ $ANIME -eq 1 ]; then
+                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[] | select((.tags.language == ("eng") or .tags.language == ("jpn")))]' > $WIP/audio.json
+        else
+                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[] | select((.tags.language == ("eng")))]' > $WIP/audio.json
+        fi
+
+        i=0
+        cat /dev/null > $WIP/transcodeaudio.txt
+
+        jq '.[].index' $WIP/audio.json | while read rawIndex; do
+                codec=$(jq --arg l $i '.[$l|fromjson].profile' $WIP/audio.json)
+
+                if [ "$codec" = "null" ]; then
+                        codec=$(jq --arg l $i '.[$l|fromjson].codec_name' $WIP/audio.json)
+                fi
+        
+                index=$(echo $(( $rawIndex - 1 | bc)))
+                echo "$rawIndex:$codec" >> $WIP/transcodeaudio.txt
+                i=$(echo $i + 1 |bc)
+        done
+        
+        cat /dev/null > $WIP/outputcodecs.txt
+
+        cat $WIP/transcodeaudio.txt | while read inputCodec; do
+                losslessCodec=""
+                index=$(echo $inputCodec | awk -F ':' '{print $1}')
+                codec=$(echo $inputCodec | awk -F ':' '{print $2}')
+                #losslessCodec=$(echo $codec | egrep -i "truehd|true hd|dts-hd ma|dts-hd")
+                if [ -z "`echo $codec | egrep -i 'truehd|true hd|dts-hd ma|dts-hd'`" ]; then
+                        outputCodec="vorbis"
+                else
+                        outputCodec="flac"
+                fi
+                echo "$index:$outputCodec" >> $WIP/outputcodecs.txt
+        done    
+        cat $WIP/outputcodecs.txt | while read transcodeList ; do
+                index=$(echo $transcodeList | awk -F ':' '{print $1}')
+                codec=$(echo $transcodeList | awk -F ':' '{print $2}')
+
+                if [ "$codec" = "vorbis" ]; then
+                        echo "ffmpeg -y -i \"`echo $INPUTFILE`\" -c:a libvorbis -q:a 6 -sample_fmt fltp -map 0:$index $WIP/track_$index.mka" >> $PARALLEL
+                else
+                        echo "ffmpeg -y -i \"`echo $INPUTFILE`\" -c:a flac -sample_fmt s32 -map 0:$index $WIP/track_$index.mka" >> $PARALLEL
+                fi
+        done
+
+        echo "ffmpeg -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS $WIP/subtitles.mkv" >> $PARALLEL
+}
