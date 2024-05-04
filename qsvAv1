@@ -17,11 +17,6 @@ DV=0
 ANIME=0
 RESCALE=0
 FOSS=0
-WIP=/media/library/wip
-mkdir -p $WIP
-rm -f "$WIP/$INPUTFILE"-*
-PARALLEL="$WIP/$INPUTFILE"-parallel.txt
-cat /dev/null > $PARALLEL
 AUDIO_COMMAND=""
 MAPPING_COMMAND=""
 SEASONNUM=""
@@ -49,6 +44,12 @@ while getopts i:c:d:a:r:f:s:e:o: option; do
         esac
 done
 
+WIP=/media/library/wip
+mkdir -p "$WIP"
+PARALLEL="$WIP/parallel.txt"
+cat /dev/null > "$PARALLEL"
+rm -f "$WIP/*"
+
 # Checks for required input file name
 if [ -z "$INPUTFILE" ]; then
         echo "No input file was provided."
@@ -66,8 +67,8 @@ for chapter in $STARTSTOP ; do
         else
                 outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-chapter-$begin-$end.mkv/g")
         fi
-        startTime=$(jq .chapters[$begin].start_time "$WIP/$INPUTFILE"-chapters.json | sed 's/\"//g')
-        endTime=$(jq .chapters[$end].end_time "$WIP/$INPUTFILE"-chapters.json | sed 's/\"//g')
+        startTime=$(jq .chapters[$begin].start_time "$WIP/chapters.json" | sed 's/\"//g')
+        endTime=$(jq .chapters[$end].end_time "$WIP/chapters.json" | sed 's/\"//g')
         ffmpeg \
                 -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 -y -hide_banner -stats -fflags genpts -loglevel error \
                 -init_hw_device qsv=qs@va \
@@ -95,42 +96,42 @@ done
 # During FOSS audio conversion, audio tracks are extracted and need to be re-muxed for easier insertion into the final video
 buildAudioMapping () {
 	i=0     
-	for file in `ls "$WIP/$INPUTFILE"-track_*.mka`; do
+	for file in `ls $WIP/track_*.mka`; do
 		AUDIO_COMMAND="$AUDIO_COMMAND -i $file "
 		MAPPING_COMMAND="$MAPPING_COMMAND -map $i:a "
 		i=$(echo $i + 1 |bc)
 	done
-	ffmpeg -y -fflags genpts -hide_banner -loglevel error -stats $AUDIO_COMMAND $MAPPING_COMMAND -c:a copy "$WIP/$INPUTFILE"-audio.mka
+	ffmpeg -y -fflags genpts -hide_banner -loglevel error -stats $AUDIO_COMMAND $MAPPING_COMMAND -c:a copy $WIP/audio.mka
 }
 
 # Converts audio to FLAC or vorbis.  Lossless codecs will be converted to FLAC, everything else vorbis.
 fossAudioConversion () {
 	if [ $ANIME -eq 1 ]; then
                 ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
-			jq '[.streams[] | select((.tags.language == ("eng") or .tags.language == ("jpn")))]' > "$WIP/$INPUTFILE"-audio.json
+			jq '[.streams[] | select((.tags.language == ("eng") or .tags.language == ("jpn")))]' > "$WIP/audio.json"
         else
                 ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
-			jq '[.streams[] | select((.tags.language == ("eng")))]' > "$WIP/$INPUTFILE"-audio.json
+			jq '[.streams[] | select((.tags.language == ("eng")))]' > "$WIP/audio.json"
         fi
 
         i=0
-        cat /dev/null > "$WIP/$INPUTFILE"-transcodeaudio.txt
+        cat /dev/null > "$WIP/transcodeaudio.txt"
 
-        jq '.[].index' "$WIP/$INPUTFILE"-audio.json | while read rawIndex; do
-                codec=$(jq --arg l $i '.[$l|fromjson].profile' "$WIP/$INPUTFILE"-audio.json)
+        jq '.[].index' "$WIP/audio.json" | while read rawIndex; do
+                codec=$(jq --arg l $i '.[$l|fromjson].profile' "$WIP/audio.json")
 
                 if [ "$codec" = "null" ]; then
-                        codec=$(jq --arg l $i '.[$l|fromjson].codec_name' "$WIP/$INPUTFILE"-audio.json)
+                        codec=$(jq --arg l $i '.[$l|fromjson].codec_name' "$WIP/audio.json")
                 fi
         
                 index=$(echo $(( $rawIndex - 1 | bc)))
-                echo "$rawIndex:$codec" >> "$WIP/$INPUTFILE"-transcodeaudio.txt
+                echo "$rawIndex:$codec" >> "$WIP/transcodeaudio.txt"
                 i=$(echo $i + 1 |bc)
         done
         
-        cat /dev/null > "$WIP/$INPUTFILE"-outputcodecs.txt
+        cat /dev/null > "$WIP/outputcodecs.txt"
 
-        cat "$WIP/$INPUTFILE"-transcodeaudio.txt | while read inputCodec; do
+        cat "$WIP/transcodeaudio.txt" | while read inputCodec; do
                 index=$(echo $inputCodec | awk -F ':' '{print $1}')
                 codec=$(echo $inputCodec | awk -F ':' '{print $2}' | tr '[:upper:]' '[:lower:]')
 		if [ -z "`echo $codec | egrep -i 'truehd|true hd|dts-hd ma|dts-hd'`" ]; then
@@ -138,23 +139,21 @@ fossAudioConversion () {
                 else
                         outputCodec="flac"
                 fi
-                echo "$index:$outputCodec" >> "$WIP/$INPUTFILE"-outputcodecs.txt
+                echo "$index:$outputCodec" >> "$WIP/outputcodecs.txt"
         done
 
-        cat "$WIP/$INPUTFILE"-outputcodecs.txt | while read transcodeList ; do
+        cat "$WIP/outputcodecs.txt" | while read transcodeList ; do
                 index=$(echo $transcodeList | awk -F ':' '{print $1}')
                 codec=$(echo $transcodeList | awk -F ':' '{print $2}')
 
                 if [ "$codec" = "vorbis" ]; then
-                        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"`echo $INPUTFILE`\" -c:a libvorbis -q:a 6 -sample_fmt fltp -map 0:$index "$WIP/$INPUTFILE"-track_$index.mka" >> $PARALLEL
+                        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"`echo $INPUTFILE`\" -vn -sn -c:a libvorbis -q:a 6 -sample_fmt fltp -map 0:$index \"$WIP/track_$index.mka\"" >> "$PARALLEL"
                 else
-                        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"`echo $INPUTFILE`\" -c:a flac -sample_fmt s32 -map 0:$index "$WIP/$INPUTFILE"-track_$index.mka" >> $PARALLEL
+                        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"`echo $INPUTFILE`\" -vn -sn -c:a flac -sample_fmt s32 -map 0:$index \"$WIP/track_$index.mka\"" >> "$PARALLEL"
                 fi
         done
 
-        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS "$WIP/$INPUTFILE"-subtitles.mkv" >> $PARALLEL
-
-	processParallelTasks
+        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS \"$WIP/subtitles.mkv\"" >> "$PARALLEL"
 }
 
 # Remuxes new audio with original video
@@ -163,10 +162,10 @@ for chapter in $STARTSTOP ; do
         begin=$(echo $chapter | awk -F ':' '{print $1}')
         end=$(echo $chapter | awk -F ':' '{print $2}')
 	outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-audioOnly.mkv/g")
-	startTime=$(jq .chapters[$begin].start_time "$WIP/$INPUTFILE"-chapters.json | sed 's/\"//g')
-	endTime=$(jq .chapters[$end].end_time "$WIP/$INPUTFILE"-chapters.json | sed 's/\"//g')
+	startTime=$(jq .chapters[$begin].start_time "$WIP/chapters.json" | sed 's/\"//g')
+	endTime=$(jq .chapters[$end].end_time "$WIP/chapters.json" | sed 's/\"//g')
 	ffmpeg -y -fflags genpts -hide_banner -loglevel error -stats \
-		-i "$INPUTFILE" -i ""$WIP/$INPUTFILE"-audio.mka" -i ""$WIP/$INPUTFILE"-subtitles.mkv" \
+		-i "$INPUTFILE" -i "$WIP/audio.mka" -i "$WIP/subtitles.mkv" \
 		-ss $startTime \
 		-to $endTime \
 		-map_chapters 0 \
@@ -185,10 +184,10 @@ splitEpisodes () {
 	chapters=$1
 
 	# Probes videos for chapter information and prints to text file
-	ffprobe -loglevel error -i "$INPUTFILE" -print_format json -show_chapters -loglevel error > "$WIP/$INPUTFILE"-chapters.json
+	ffprobe -loglevel error -i "$INPUTFILE" -print_format json -show_chapters -loglevel error > "$WIP/chapters.json"
 
         # Parses json file for the start time of each chapter.  Also counts number of chapters
-        rawChapters=$(jq .chapters[].start_time "$WIP/$INPUTFILE"-chapters.json | wc -l)
+        rawChapters=$(jq .chapters[].start_time "$WIP/chapters.json" | wc -l)
         # ffmpeg chapters start at zero.  Subtracting 1 to align with last chapter.
         totalChapters=$(echo $(($rawChapters - 1)) | bc)
 
@@ -241,25 +240,25 @@ generateFilters () {
 convertDolbyVision () {
         # Extracts the video and discards the DV side channel data
 	ffmpeg -y -hide_banner -loglevel error -stats -i "$INPUTFILE" -dn -c:v copy -vbsf hevc_mp4toannexb -f hevc - | \
-		dovi_tool remove - -o "$WIP/$INPUTFILE"-video.hevc
+		dovi_tool remove - -o "$WIP/video.hevc"
         # Takes the HEVC stream and inserts into MP4 container
-        echo "ffmpeg -hide_banner -loglevel error -stats -y -fflags genpts -i "$WIP/$INPUTFILE"-video.hevc -c:v copy "$WIP/$INPUTFILE"-video.mp4" >> $PARALLEL
+        echo "ffmpeg -hide_banner -loglevel error -stats -y -fflags genpts -i "$WIP/video.hevc" -c:v copy \"$WIP/video.mp4\"" >> "$PARALLEL"
 
         # Creates final input file parameters and mapping
-        INPUT_LIST="-i "$WIP/$INPUTFILE"-video.mp4 -i "$WIP/$INPUTFILE"-audio.mka -i "$WIP/$INPUTFILE"-subtitles.mkv"
+        INPUT_LIST="-i $WIP/video.mp4 -i $WIP/audio.mka -i $WIP/subtitles.mkv"
         MAPPING="-map 1:v -map 2:a -map 3:s? -map 0:t?"
 }
 
 # Runs all tasks in the parallel text file, 6 at a time
 processParallelTasks () {
-	cat $PARALLEL | parallel -j 6 --verbose '{}'
-	cat /dev/null > $PARALLEL
+	cat "$PARALLEL" | parallel -j 6 --verbose '{}'
+	cat /dev/null > "$PARALLEL"
 }
 
 # Only performs language selection
 processAudioSubs () {
-	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -sn -c:a copy $LANG_OPTIONS "$WIP/$INPUTFILE"-audio.mka" >> $PARALLEL
-	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS "$WIP/$INPUTFILE"-subtitles.mkv" >> $PARALLEL
+	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -sn -c:a copy $LANG_OPTIONS \"$WIP/audio.mka\"" >> "$PARALLEL"
+	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS \"$WIP/subtitles.mkv\"" >> "$PARALLEL"
 }
 
 # Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
@@ -281,33 +280,35 @@ splitEpisodes $CHAPTERSEPISODE
 echo "Generating video filter parameters."
 generateFilters
 
+# If -d 1 option is used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just extract audio and subtitles and perform language selection.
+# Also creates final input file and mapping parameters
+if [ $DV -eq 1 ]; then
+        echo "Converting Dolby Vision to HDR10."
+        convertDolbyVision
+        echo "Generating final input list and mappings."
+else
+        echo "Generating final input list and mappings."
+        INPUT_LIST="-i $WIP/audio.mka -i $WIP/subtitles.mkv"
+        MAPPING="-map 0:v -map 1:a -map 2:s? -map 0:t?"
+fi
+
 # If the -f 1 option is used, all audio tracks will be converted to FOSS audio codecs
 # Lossless codecs will be converted to FLAC. Lossy codecs will be converted to vorbis.
 
 if [ $FOSS -eq 1 ]; then
 	echo "Converting audio to FLAC/Vorbis.  Performing audio/sub language selection."
         fossAudioConversion
+	processParallelTasks
 	buildAudioMapping
 else
 	echo "Performing audio/sub language selection."
         processAudioSubs
-fi
-
-# If -d 1 option is used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just extract audio and subtitles and perform language selection.
-# Also creates final input file and mapping parameters
-if [ $DV -eq 1 ] && [ $CONVERTAUDIO -eq 0 ]; then
-	echo "Converting Dolby Vision to HDR10."
-        convertDolbyVision
-	echo "Generating final input list and mappings."
-else
-	echo "Generating final input list and mappings."
-        INPUT_LIST="-i "$WIP/$INPUTFILE"-audio.mka -i "$WIP/$INPUTFILE"-subtitles.mkv"
-        MAPPING="-map 0:v -map 1:a -map 2:s? -map 0:t?"
+	processParallelTasks
 fi
 
 # Processes tasks queued up in PARALLEL
 echo "Processing queued parallel tasks"
-processParallelTasks
+#processParallelTasks
 
 # Iterates through chapter list
 if [ $CONVERTAUDIO -eq 1 ] && [ $FOSS -eq 1 ] ; then
@@ -320,4 +321,4 @@ fi
 
 # WIP cleanup
 echo "Cleaning up WIP folder."
-rm -f "$WIP/$INPUTFILE"-*
+rm -f $WIP/*
