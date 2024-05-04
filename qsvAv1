@@ -106,10 +106,10 @@ buildAudioMapping () {
 # Converts audio to FLAC or vorbis.  Lossless codecs will be converted to FLAC, everything else vorbis.
 fossAudioConversion () {
 	if [ $ANIME -eq 1 ]; then
-                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
+                ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
 			jq '[.streams[] | select((.tags.language == ("eng") or .tags.language == ("jpn")))]' > $WIP/audio.json
         else
-                ffprobe -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
+                ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
 			jq '[.streams[] | select((.tags.language == ("eng")))]' > $WIP/audio.json
         fi
 
@@ -185,7 +185,7 @@ splitEpisodes () {
 	chapters=$1
 
 	# Probes videos for chapter information and prints to text file
-	ffprobe -i "$INPUTFILE" -print_format json -show_chapters -loglevel error > $WIP/chapters.json
+	ffprobe -loglevel error -i "$INPUTFILE" -print_format json -show_chapters -loglevel error > $WIP/chapters.json
 
         # Parses json file for the start time of each chapter.  Also counts number of chapters
         rawChapters=$(jq .chapters[].start_time $WIP/chapters.json | wc -l)
@@ -210,7 +210,7 @@ splitEpisodes () {
 # Generates video filters for vpp_qsv
 generateFilters () {
 	# ffprobe to determine if interlaced.  If yes, set yadif deinterlace filter.
-	rawParams=$(ffprobe -i "$INPUTFILE" -select_streams v:0  -show_entries stream=width,height,field_order)
+	rawParams=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams v:0  -show_entries stream=width,height,field_order)
 	interlaced=$(echo $rawParams | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}')
 	deinterlaced=""
 
@@ -293,7 +293,7 @@ fi
 # If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
 # the function.  Otherwise the entire file will be processed.
 echo "Generating chapter start/stop times."
-splitEpisodes $CHAPTEREPISODE
+splitEpisodes $CHAPTERSEPISODE
 
 # Analyzes video, generates crop, deinterlace, video quality, rescaling parameters for insertion in vpp_qsv filter.
 echo "Generating video filter parameters."
