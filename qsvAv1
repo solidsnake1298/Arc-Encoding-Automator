@@ -85,7 +85,7 @@ for chapter in $STARTSTOP ; do
                 -vf vpp_qsv="$FILTERS" \
                 -c:a copy \
                 -c:s copy \
-                -global_quality:v $quality \
+                -global_quality:v 26 \
                 -look_ahead 1 \
                 -look_ahead_depth 100 \
                 "$outputFile"
@@ -230,26 +230,8 @@ generateFilters () {
 	x=$(echo $rawCrop | awk -F ":" '{print $3}')
 	y=$(echo $rawCrop | awk -F ":" '{print $4}')
 
-	# If 1080p or higher, quality is set to 26.  If lower, quality is set to 30
-	if [ $w -lt 1300 ]; then
-	        quality=30
-	else
-	        quality=26
-	fi
-
 	# Combines crop and deterinterlace filters.  Always present.
 	cropParams="$deinterlaced:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4"
-
-	# Sets rescaling options when option used.  Otherwise null.
-	if [ $RESCALE -eq 1 ]; then
-	        rescaleParams=";scale_qsv=w=1920:h=-1"
-	elif [ $RESCALE -eq 2 ]; then
-	        rescaleParams=";scale_qsv=w=640:h=480"
-	elif [ $RESCALE -eq 3 ]; then
-	        rescaleParams=";scale_qsv=w=720:h=480"
-	else
-	        rescaleParams=""
-	fi
 
 	# Combines filters
 	FILTERS="`echo $cropParams``echo $rescaleParams`"
