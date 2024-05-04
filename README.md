@@ -11,12 +11,12 @@ Automates media encoding to AV1, including handling language selection, converti
 - parallel - Available in most package repos.
 
 # Options
-- i Input file (required)
-- c Number of chapters per episode when splitting monolithic TV show files.
-- s Season number for output file name (WIP), requires usage of -c.
-- e Starting episode number for output file name (WIP), requires usage of -c.
-- d Enable with 1.  Converts Dolby Vision to HDR10 by removing the DV side channel.  Tested with DV 7.6 and 8.1.  Requires dovi_tool be installed.
-- a Enable with 1.  Intended for Anime.  Modifies language selection to also select Japanese in addition to English audio/subtitle tracks.
-- r Defaults to 0 (do nothing).  Currently has 1, 2, and 3 as options.  This is deprecated and was a hack.  Planning to remove.
-- f Enable with 1.  When enabled all selected audio tracks are converted to FLAC or Vorbis.  Lossless codecs, like Dolby TrueHD or DTS-HD MA, are converted to FLAC.  Lossy codecs are converted to Vorbis.
-- o Enable with 1.  When enabled, only the audio is processed.  Without -f only English and/or Japanese track selection is performed.
+- -i Input file (required)
+- -c Number of chapters per episode when splitting monolithic TV show files.
+- -s Season number for output file name (WIP), requires usage of -c.
+- -e Starting episode number for output file name (WIP), requires usage of -c.
+- -d Enable with 1.  Converts Dolby Vision to HDR10 by removing the DV side channel.  Tested with DV 7.6 and 8.1.  Requires dovi_tool be installed.
+- -a Enable with 1.  Intended for Anime.  Modifies language selection to also select Japanese in addition to English audio/subtitle tracks.
+- -r Defaults to 0 (do nothing).  Currently has 1, 2, and 3 as options.  This is deprecated and was a hack.  Planning to remove.
+- -f Enable with 1.  When enabled all selected audio tracks are converted to FLAC or Vorbis.  Lossless codecs, like Dolby TrueHD or DTS-HD MA, are converted to FLAC.  Lossy codecs are converted to Vorbis.
+- -o Enable with 1.  When enabled, only the audio is processed.  Without -f only English and/or Japanese track selection is performed.
