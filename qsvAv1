@@ -251,6 +251,7 @@ convertDolbyVision () {
 
 # Runs all tasks in the parallel text file, 6 at a time
 processParallelTasks () {
+	echo "Processing queued parallel tasks"
 	cat "$PARALLEL" | parallel -j 6 --verbose '{}'
 	cat /dev/null > "$PARALLEL"
 }
@@ -305,10 +306,6 @@ else
         processAudioSubs
 	processParallelTasks
 fi
-
-# Processes tasks queued up in PARALLEL
-echo "Processing queued parallel tasks"
-#processParallelTasks
 
 # Iterates through chapter list
 if [ $CONVERTAUDIO -eq 1 ] ; then
