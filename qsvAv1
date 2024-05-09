@@ -311,7 +311,7 @@ echo "Processing queued parallel tasks"
 #processParallelTasks
 
 # Iterates through chapter list
-if [ $CONVERTAUDIO -eq 1 ] && [ $FOSS -eq 1 ] ; then
+if [ $CONVERTAUDIO -eq 1 ] ; then
 	echo "Muxing new audio with original video."
         convertAudioOnly
 else
