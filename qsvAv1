@@ -86,6 +86,7 @@ for chapter in $STARTSTOP ; do
                 -vf vpp_qsv="$FILTERS" \
                 -c:a copy \
                 -c:s copy \
+		-disposition:s 0 \
                 -global_quality:v 26 \
                 -look_ahead 1 \
                 -look_ahead_depth 100 \
@@ -153,31 +154,22 @@ fossAudioConversion () {
                 fi
         done
 
-        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS \"$WIP/subtitles.mkv\"" >> "$PARALLEL"
+        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -an -map 0:v -c:v copy -c:s copy $LANG_OPTIONS \"$WIP/subtitles.mkv\"" >> "$PARALLEL"
 }
 
 # Remuxes new audio with original video
 convertAudioOnly () {
-for chapter in $STARTSTOP ; do
-        begin=$(echo $chapter | awk -F ':' '{print $1}')
-        end=$(echo $chapter | awk -F ':' '{print $2}')
 	outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-audioOnly.mkv/g")
-	startTime=$(jq .chapters[$begin].start_time "$WIP/chapters.json" | sed 's/\"//g')
-	endTime=$(jq .chapters[$end].end_time "$WIP/chapters.json" | sed 's/\"//g')
 	ffmpeg -y -fflags genpts -hide_banner -loglevel error -stats \
-		-i "$INPUTFILE" -i "$WIP/audio.mka" -i "$WIP/subtitles.mkv" \
-		-ss $startTime \
-		-to $endTime \
-		-map_chapters 0 \
+		-i "$INPUTFILE" -i $WIP/audio.mka -i $WIP/subtitles.mkv \
 		-map 0:v \
 		-map 1:a \
 		-map 2:s \
-		-map 0:t? \
 		-c:v copy \
 		-c:a copy \
 		-c:s copy \
+		-disposition:s 0 \
 		"$outputFile"
-done
 }
 
 splitEpisodes () {
@@ -258,8 +250,8 @@ processParallelTasks () {
 
 # Only performs language selection
 processAudioSubs () {
-	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -sn -c:a copy $LANG_OPTIONS \"$WIP/audio.mka\"" >> "$PARALLEL"
-	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -vn -an -c:s copy $LANG_OPTIONS \"$WIP/subtitles.mkv\"" >> "$PARALLEL"
+	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -sn -c:v copy -c:a copy $LANG_OPTIONS \"$WIP/audio.mka\"" >> "$PARALLEL"
+	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -an -map 0:v -c:v copy -c:s copy $LANG_OPTIONS \"$WIP/subtitles.mkv\"" >> "$PARALLEL"
 }
 
 # Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
@@ -270,6 +262,27 @@ if [ $ANIME -eq 1 ]; then
 else
 	echo "Selecting English audio/subtitle tracks."
         LANG_OPTIONS="-map 0:m:language:eng?"
+fi
+
+# If only converting audio, skip everything else
+if [ $CONVERTAUDIO -eq 1 ] ; then
+	if [ $FOSS -eq 1 ]; then
+		echo "Converting audio to FLAC/Vorbis.  Performing audio/sub language selection."
+		fossAudioConversion
+		processParallelTasks
+		buildAudioMapping
+		convertAudioOnly
+	else
+		echo "Language selection and/or audio conversion only"
+		processAudioSubs
+		processParallelTasks
+	        convertAudioOnly
+	fi
+
+        # WIP cleanup
+        echo "Cleaning up WIP folder."
+        rm -f $WIP/*
+        exit 0
 fi
 
 # If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
