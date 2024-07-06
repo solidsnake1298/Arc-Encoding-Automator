@@ -48,7 +48,7 @@ WIP=/media/library/wip
 mkdir -p "$WIP"
 PARALLEL="$WIP/parallel.txt"
 cat /dev/null > "$PARALLEL"
-rm -f "$WIP/*"
+rm -f $WIP/*
 
 # Checks for required input file name
 if [ -z "$INPUTFILE" ]; then
@@ -66,9 +66,11 @@ for chapter in $STARTSTOP ; do
                 outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-all.mkv/g")
         else
                 outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-chapter-$begin-$end.mkv/g")
+		inputList="-i $WIP/chapters-segment-$begin-$end-video.mp4 -i $WIP/chapters-segment-$begin-$end-audio.mka -i $WIP/chapters-segment-$begin-$end-subtitles.mkv"
+		mapping="-map 0:v -map 1:a -map 2:s -map 2:t?"
         fi
-        startTime=$(jq .chapters[$begin].start_time "$WIP/chapters.json" | sed 's/\"//g')
-        endTime=$(jq .chapters[$end].end_time "$WIP/chapters.json" | sed 's/\"//g')
+        #startTime=$(jq .chapters[$begin].start_time "$WIP/chapters.json" | sed 's/\"//g')
+        #endTime=$(jq .chapters[$end].end_time "$WIP/chapters.json" | sed 's/\"//g')
         ffmpeg \
                 -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 -y -hide_banner -stats -loglevel error \
                 -init_hw_device qsv=qs@va \
@@ -76,12 +78,10 @@ for chapter in $STARTSTOP ; do
                 -hwaccel qsv \
                 -hwaccel_output_format qsv \
 		-fflags +genpts+igndts \
-                $INPUT_LIST \
+                $inputList \
 		-avoid_negative_ts make_zero -max_interleave_delta 0 \
-                -ss $startTime \
-                -to $endTime \
                 -map_chapters 2 \
-                $MAPPING \
+                $mapping \
                 -c:v av1_qsv \
                 -preset veryslow \
                 -vf vpp_qsv="$FILTERS" \
@@ -96,6 +96,10 @@ for chapter in $STARTSTOP ; do
 done
 }
                 #-i "$INPUTFILE" \
+                #$INPUT_LIST \
+                #$MAPPING \
+                #-ss $startTime \
+                #-to $endTime \
 
 # During FOSS audio conversion, audio tracks are extracted and need to be re-muxed for easier insertion into the final video
 buildAudioMapping () {
@@ -194,6 +198,9 @@ splitEpisodes () {
 			first=$i
 		        last=$(echo $(($i + $CHAPTERSEPISODE - 1)) | bc)
 		        STARTSTOP=$(echo "$STARTSTOP $first:$last")
+		        startTime=$(jq .chapters[$first].start_time "$WIP/chapters.json" | sed 's/\"//g')
+		        endTime=$(jq .chapters[$last].end_time "$WIP/chapters.json" | sed 's/\"//g')
+			ffmpeg -hide_banner -loglevel error -stats -y -fflags +genpts+igndts -i "$INPUTFILE" -ss $startTime -to $endTime -map 0 -c:v copy -c:a copy -c:s copy -map 0:t? -map_chapters 0 -avoid_negative_ts make_zero -max_interleave_delta 0 -max_muxing_queue_size 2048 "$WIP/chapters-segment-$first-$last.mkv"
 		        i=$(echo $(($i + $CHAPTERSEPISODE)) | bc)
 	        done
 	else
@@ -253,14 +260,30 @@ processParallelTasks () {
 
 # Only performs language selection
 processAudioSubs () {
-	echo "ffmpeg -hide_banner -loglevel error -stats -y -fflags +genpts+igndts -i \"$INPUTFILE\" -sn -c:v copy -c:a copy $LANG_OPTIONS -avoid_negative_ts make_zero -max_interleave_delta 0 -max_muxing_queue_size 2048 \"$WIP/audio.mka\"" >> "$PARALLEL"
-	echo "ffmpeg -hide_banner -loglevel error -stats -y -fflags +genpts+igndts -i \"$INPUTFILE\" -an -map 0:v -c:v copy -c:s copy -map 0:t? -map_chapters 0 $LANG_OPTIONS -avoid_negative_ts make_zero -max_interleave_delta 0 -max_muxing_queue_size 2048 \"$WIP/subtitles.mkv\"" >> "$PARALLEL"
+	if [ $chapters -ne 0 ]; then
+		ls $WIP/chapters-segment*.mkv | while read file ; do
+			newFile=$(echo $file | awk -F '/' '{print $NF}' | sed 's/.mkv//g')
+			echo "ffmpeg -hide_banner -loglevel error -stats -y -fflags +genpts+igndts -i \"$file\" -sn -vn -c:a copy $LANG_OPTIONS -avoid_negative_ts make_zero -max_interleave_delta 0 -max_muxing_queue_size 2048 \"$WIP/$newFile-audio.mka\"" >> "$PARALLEL"
+			echo "ffmpeg -hide_banner -loglevel error -stats -y -fflags +genpts+igndts -i \"$file\" -an -c:v copy -c:s copy -map 0:t? -map_chapters 0 $LANG_OPTIONS -avoid_negative_ts make_zero -max_interleave_delta 0 -max_muxing_queue_size 2048 \"$WIP/$newFile-subtitles.mkv\"" >> "$PARALLEL"
+		done
+	else
+		newFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}' | sed  's/.mkv//g')
+		echo "ffmpeg -hide_banner -loglevel error -stats -y -fflags +genpts+igndts -i \"$INPUTFILE\" -sn -vn -c:a copy $LANG_OPTIONS -avoid_negative_ts make_zero -max_interleave_delta 0 -max_muxing_queue_size 2048 \"$WIP/$newFile-audio.mka\"" >> "$PARALLEL"
+		echo "ffmpeg -hide_banner -loglevel error -stats -y -fflags +genpts+igndts -i \"$INPUTFILE\" -an -map 0:v -c:v copy -c:s copy -map 0:t? -map_chapters 0 $LANG_OPTIONS -avoid_negative_ts make_zero -max_interleave_delta 0 -max_muxing_queue_size 2048 \"$WIP/$newFile-subtitles.mkv\"" >> "$PARALLEL"
+	fi
 }
 
 # Extracts video into separate file
 extractVideo () {
-	echo "Extracting video track"
-	echo "ffmpeg -hide_banner -loglevel error -stats -fflags +genpts+igndts -y -i \"$INPUTFILE\" -an -sn -c:v copy -avoid_negative_ts make_zero -max_interleave_delta 0 -max_muxing_queue_size 2048 \"$WIP/video.mp4\"" >> $PARALLEL
+	if [ $chapters -ne 0 ]; then
+                ls $WIP/chapters-segment*.mkv | while read file ; do
+			newFile=$(echo $file | awk -F '/' '{print $NF}' | sed 's/.mkv//g')
+			echo "Extracting video track"
+			echo "ffmpeg -hide_banner -loglevel error -stats -fflags +genpts+igndts -y -i \"$file\" -an -sn -c:v copy -avoid_negative_ts make_zero -max_interleave_delta 0 -max_muxing_queue_size 2048 \"$WIP/$newFile-video.mp4\"" >> $PARALLEL
+		done
+		else
+			echo "ffmpeg -hide_banner -loglevel error -stats -fflags +genpts+igndts -y -i \"$INPUTFILE\" -an -sn -c:v copy -avoid_negative_ts make_zero -max_interleave_delta 0 -max_muxing_queue_size 2048 \"$WIP/$newFile-video.mp4\"" >> $PARALLEL
+	fi
 }
 
 # Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
@@ -342,4 +365,4 @@ fi
 
 # WIP cleanup
 echo "Cleaning up WIP folder."
-rm -f $WIP/*
+#rm -f $WIP/*
