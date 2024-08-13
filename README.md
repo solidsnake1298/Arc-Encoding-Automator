@@ -3,8 +3,8 @@ Automates media encoding to AV1, including handling language selection, converti
 
 # Requirements
 - Linux kernel 6.2+.
-- ffmpeg, but tested with Jellyfin-ffmpeg6.0.1, symlinked to /usr/bin.
-- Intel GPU with AV1 encoding support.
+- ffmpeg, but tested with Jellyfin-ffmpeg 6.0.1, symlinked to /usr/bin.
+- Intel Arc GPU.  May work with Meteor Lake Intel CPUs, but will require kernel 6.7 and newer.
 - dovi_tool installed to /usr/bin - https://github.com/quietvoid/dovi_tool
 - jq - Available in most package repos.
 - bc - Available in most package repos.
