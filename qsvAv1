@@ -5,8 +5,9 @@
 
 ###########################
 # Assumes jellyfin-ffmpeg is installed and symlinked in /usr/bin.
-# May work with vanilla ffmpeg, but may require additional Intel drivers.
-# Must have parallel, jq, and bc installed.
+# Most functions may work with vanilla ffmpeg, but may require additional Intel drivers.
+# Removing Dolby Vision function requires jellyfin-ffmpeg 7.0.2-4 and newer.
+# Must have jq and bc installed.
 # User running this script must be in render group.  Requires user logout if added to group.
 ##########################
 
@@ -17,15 +18,10 @@ DV=0
 ANIME=0
 RESCALE=0
 FOSS=0
-AUDIO_COMMAND=""
-MAPPING_COMMAND=""
-SEASONNUM=""
-EPISODESTART=""
 CONVERTAUDIO=0
-STARTEND=""
 FILTERS=""
-INPUT_LIST=""
-MAPPING=""
+AUDIO_COMMAND="-c:a libopus -vbr on -compression_level 10 -application audio"
+SUB_COMMAND=""
 
 # Reads input paramamters
 while getopts i:c:d:a:r:f:s:e:o: option; do
@@ -46,8 +42,6 @@ done
 
 WIP=/media/library/wip
 mkdir -p "$WIP"
-PARALLEL="$WIP/parallel.txt"
-cat /dev/null > "$PARALLEL"
 rm -f "$WIP/*"
 
 # Checks for required input file name
@@ -56,16 +50,25 @@ if [ -z "$INPUTFILE" ]; then
         exit 1
 fi
 
+# Checks for subtitle track.
+emptySubJson=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq '[.streams[]]' | jq -e '. | length == 0')
+
 # Uses Intel QSV to encode the original or DV converted video to AV1.  Muxes in the converted and/or language selected audio and subtitles.
 # Includes attachments if present.  If splitting out episodes from a MKV that came off the disc as a single file, it will loop through for each episode.
 av1Encode () {
 for chapter in $STARTSTOP ; do
+	audioCommand=$(cat "$WIP/audioCommand.txt")
+	subCommand=$(cat "$WIP/subCommand.txt")
         begin=$(echo $chapter | awk -F ':' '{print $1}')
         end=$(echo $chapter | awk -F ':' '{print $2}')
+        startTime=$(jq .chapters[$begin].start_time "$WIP/chapters.json" | sed 's/\"//g')
+        endTime=$(jq .chapters[$end].end_time "$WIP/chapters.json" | sed 's/\"//g')
+	chapterSelect=""
         if [ $CHAPTERSEPISODE -eq 0 ]; then
                 outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-all.mkv/g")
         else
                 outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-chapter-$begin-$end.mkv/g")
+		chapterSelect="-ss $startTime -to $endTime"
         fi
         startTime=$(jq .chapters[$begin].start_time "$WIP/chapters.json" | sed 's/\"//g')
         endTime=$(jq .chapters[$end].end_time "$WIP/chapters.json" | sed 's/\"//g')
@@ -75,54 +78,105 @@ for chapter in $STARTSTOP ; do
                 -filter_hw_device qs \
                 -hwaccel qsv \
                 -hwaccel_output_format qsv \
+		-extra_hw_frames 40 \
                 -i "$INPUTFILE" \
-                $INPUT_LIST \
-                -ss $startTime \
-                -to $endTime \
+                $chapterSelect \
                 -map_chapters 0 \
-                $MAPPING \
+		-map 0:v \
                 -c:v av1_qsv \
+		-pix_fmt yuv420p10le \
+                -q:v 22 \
+                -look_ahead_depth 40 \
                 -preset veryslow \
                 -vf vpp_qsv="$FILTERS" \
-                -c:a copy \
-                -c:s copy \
+		$audioCommand \
+		$subCommand \
+		-map 0:t? \
 		-disposition:s 0 \
+		-low_delay_brc 1 \
 		-extbrc 1 \
-                -global_quality:v 26 \
-                -look_ahead_depth 100 \
+		-adaptive_i 1 \
+		-adaptive_b 1 \
+		-b_strategy 1 \
+		-bf 39 \
 		-max_muxing_queue_size 2048 \
-		-avoid_negative_ts make_zero -max_interleave_delta 0 \
+		-max_interleave_delta 0 \
+		-avoid_negative_ts auto \
                 "$outputFile"
 done
 }
 
-# During FOSS audio conversion, audio tracks are extracted and need to be re-muxed for easier insertion into the final video
-buildAudioMapping () {
-	i=0     
-	for file in `ls $WIP/track_*.mka`; do
-		AUDIO_COMMAND="$AUDIO_COMMAND -i $file "
-		MAPPING_COMMAND="$MAPPING_COMMAND -map $i:a "
-		i=$(echo $i + 1 |bc)
-	done
-	ffmpeg -y -fflags +genpts+igndts -hide_banner -loglevel error -stats $AUDIO_COMMAND $MAPPING_COMMAND -c:a copy $WIP/audio.mka
+# Converts audio to FLAC or vorbis.  Lossless codecs will be converted to FLAC, everything else vorbis.
+audioPreProcessing () {
+	cat /dev/null > "$WIP/audioFinal.txt"
+	emptyAudioJson=$(cat "$WIP/audio.json" | jq -e '. | length == 0')
+	if [ $ANIME -eq 1 ]; then
+		# checks if audio.json is empty due to untagged streams
+		if [ "${emptyAudioJson}" = 'true' ]; then
+			ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[]]' > "$WIP/audio.json"
+		fi
+
+		# if lossless tracks are present, ignore lossy tracks
+		if [ "${emptyAudioJson}" = 'true' ]; then
+			cat "$WIP/audio.json" > "$WIP/audioFinal.txt"
+		else
+			lossless=$(jq -r '.[] | select(.tags.language == ("eng"))' "$WIP/audio.json" | egrep -i "dts-hd ma|truehd" | head -1)
+			if [ ! -z "$lossless" ]; then
+				codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
+				if [ ! -z "`echo $codec | grep -i dts`" ]; then
+					cat "$WIP/audio.json" | jq -r '.[] | select(.profile == ("DTS-HD MA") and .tags.language == ("eng")) | .index' >> "$WIP/audioFinal.txt"
+				elif [ ! -z "`echo $codec | grep -i truehd`" ]; then
+					cat "$WIP/audio.json" | jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' >> "$WIP/audioFinal.txt"
+				fi
+			else
+				cat "$WIP/audio.json" | jq -r '.[] | select(.tags.language == ("eng")) | .index' >> "$WIP/audioFinal.txt"
+			fi
+                        lossless=$(jq -r '.[] | select(.tags.language == ("jpn"))' "$WIP/audio.json" | egrep -i "dts-hd ma|truehd" | head -1)
+                        if [ ! -z "$lossless" ]; then
+                                codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
+                                if [ ! -z "`echo $codec | grep -i dts`" ]; then
+					cat "$WIP/audio.json" | jq -r '.[] | select(.profile == ("DTS-HD MA") and .tags.language == ("jpn")) | .index' >> "$WIP/audioFinal.txt"
+                                elif [ ! -z "`echo $codec | grep -i truehd`" ]; then
+					cat "$WIP/audio.json" | jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("jpn")) | .index' >> "$WIP/audioFinal.txt"
+                                fi
+                        else
+				cat "$WIP/audio.json" | jq -r '.[] | select(.tags.language == ("jpn")) | .index' >> "$WIP/audioFinal.txt"
+                        fi
+		fi
+        else
+                # checks if audio.json is empty due to untagged streams
+                if [ "${emptyAudioJson}" = 'true' ]; then
+                        ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[]]' > "$WIP/audio.json"
+                fi
+
+                if [ "${emptyAudioJson}" = 'true' ]; then
+		        cat "$WIP/audio.json" > "$WIP/audioFinal.txt"
+		else
+                	lossless=$(egrep -i "dts-hd ma|truehd" "$WIP/audio.json" | head -1)
+	                if [ ! -z "$lossless" ]; then
+	                        codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
+	                        if [ ! -z "`echo $codec | grep -i dts`" ]; then
+					cat "$WIP/audio.json" | jq -r '.[] | select(.profile == ("DTS-HD MA")) | .index' >> "$WIP/audioFinal.txt"
+	                        elif [ ! -z "`echo $codec | grep -i truehd`" ]; then
+					cat "$WIP/audio.json" | jq -r '.[] | select(.codec_name == ("truehd")) | .index' >> "$WIP/audioFinal.txt"
+	                        fi
+	                else
+	                        cat "$WIP/audio.json" > "$WIP/audioFinal.txt"
+	                fi        
+		fi
+	fi
 }
 
-# Converts audio to FLAC or vorbis.  Lossless codecs will be converted to FLAC, everything else vorbis.
-fossAudioConversion () {
-	if [ $ANIME -eq 1 ]; then
-                ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
-			jq '[.streams[] | select((.tags.language == ("eng") or .tags.language == ("jpn")))]' > "$WIP/audio.json"
-        else
-                ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
-			jq '[.streams[] | select((.tags.language == ("eng")))]' > "$WIP/audio.json"
-        fi
-
-        i=0
-        cat /dev/null > "$WIP/transcodeaudio.txt"
-
-        jq '.[].index' "$WIP/audio.json" | while read rawIndex; do
-                codec=$(jq --arg l $i '.[$l|fromjson].profile' "$WIP/audio.json")
-                channels=$(jq --arg l $i '.[$l|fromjson].channels' "$WIP/audio.json")
+fossAudioMapping () {
+	audioCommand=""
+        while read rawIndex; do
+		if [ $rawIndex -eq 0 ]; then
+			index=0
+		else
+			index=$(echo $(( $rawIndex - 1 | bc)))
+		fi
+		audioCommand="$audioCommand -map 0:a:${index}"
+                channels=$(jq --arg l $index '.[$l|fromjson].channels' "$WIP/audio.json")
 		
 		if [ $channels -gt 2 ]; then
 			opusMapping=1
@@ -130,58 +184,65 @@ fossAudioConversion () {
 			opusMapping=0
 		fi
 
-                if [ "$codec" = "null" ]; then
-                        codec=$(jq --arg l $i '.[$l|fromjson].codec_name' "$WIP/audio.json")
-                fi
-        
-                index=$(echo $(( $rawIndex - 1 | bc)))
-                echo "$rawIndex:$codec:$channels:$opusMapping" >> "$WIP/transcodeaudio.txt"
-                i=$(echo $i + 1 |bc)
-        done
-        
-        cat /dev/null > "$WIP/outputcodecs.txt"
+		audioCommand="$audioCommand -ac:a:${index} ${channels} -mapping_family:a:${index} ${opusMapping}"
+	done <<< "$(cat $WIP/audioFinal.txt)"
+	echo "$AUDIO_COMMAND $audioCommand" > "$WIP/audioCommand.txt"
+}
 
-        cat "$WIP/transcodeaudio.txt" | while read inputCodec; do
-                index=$(echo $inputCodec | awk -F ':' '{print $1}')
-                codec=$(echo $inputCodec | awk -F ':' '{print $2}' | tr '[:upper:]' '[:lower:]')
-                channels=$(echo $inputCodec | awk -F ':' '{print $3}')
-                opusMapping=$(echo $inputCodec | awk -F ':' '{print $4}')
-		if [ -z "`echo $codec | egrep -i 'truehd|true hd|dts-hd ma|dts-hd'`" ]; then
-                        outputCodec="opus"
+audioMapping () {
+        audioCommand=""
+        while read rawIndex; do
+                if [ $rawIndex -eq 0 ]; then
+                        index=0
                 else
-                        outputCodec="flac"
+                        index=$(echo $(( $rawIndex - 1 | bc)))
                 fi
-                echo "$index:$outputCodec:$channels:$opusMapping" >> "$WIP/outputcodecs.txt"
-        done
+                audioCommand="$audioCommand -map 0:a:${index}"
+        done <<< "$(cat $WIP/audioFinal.txt)"
+        echo "$audioCommand" > "$WIP/audioCommand.txt"
+}
 
-        cat "$WIP/outputcodecs.txt" | while read transcodeList ; do
-                index=$(echo $transcodeList | awk -F ':' '{print $1}')
-                codec=$(echo $transcodeList | awk -F ':' '{print $2}')
-                channels=$(echo $transcodeList | awk -F ':' '{print $3}')
-                opusMapping=$(echo $transcodeList | awk -F ':' '{print $4}')
-
-                if [ "$codec" = "opus" ]; then
-                        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"`echo $INPUTFILE`\" -sn -c:a libopus -ac $channels -vbr on -compression_level 10 -application audio -mapping_family $opusMapping -map 0:$index \"$WIP/track_$index.mka\"" >> "$PARALLEL"
-                else
-                        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"`echo $INPUTFILE`\" -sn -c:a flac -sample_fmt s32 -ch_mode indep -map 0:$index \"$WIP/track_$index.mka\"" >> "$PARALLEL"
-                fi
-        done
-
-        echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -an -map 0:v -c:v copy -c:s copy $LANG_OPTIONS \"$WIP/subtitles.mkv\"" >> "$PARALLEL"
+subMapping() {
+	subCommand=""
+	firstSub=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[0] | .index' | bc)
+	# Checks for no subtitle track.  Common for older fansubs with burned in subtitles.
+	if [ "${emptySubJson}" = 'true' ]; then
+		echo "No subtitle track"
+		subCommand="-sn"
+	else
+		# If audio language tags are not present, safe to assume sub language tags aren't either
+		if [ "${emptyAudioJson}" = 'true' ]; then
+			subCommand="-map 0:s -c:s copy"
+		else
+			subCommand="-c:s copy"
+			while read rawIndex; do
+				index=$(echo $(( $rawIndex - $firstSub | bc)))
+				subCommand="$subCommand -map 0:s:$index"
+			done <<< "$(jq '.[].index' $WIP/subtitles.json)"
+		fi
+	fi
+	echo "$subCommand" > "$WIP/subCommand.txt"
 }
 
 # Remuxes new audio with original video
-convertAudioOnly () {
-	outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-audioOnly.mkv/g")
+selectLanguageOnly () {
+	extension=$(echo "$INPUTFILE" | awk -F '.' '{print $NF}')
+	outputFile=$(echo "$INPUTFILE" | sed "s/.${extension}/-audioOnly.mkv/g")
+	audioCommand=$(cat "$WIP/audioCommand.txt")	
+	subCommand=$(cat "$WIP/subCommand.txt")
+
 	ffmpeg -y -fflags +genpts+igndts -hide_banner -loglevel error -stats \
-		-i "$INPUTFILE" -i $WIP/audio.mka -i $WIP/subtitles.mkv \
+		-i "$INPUTFILE" \
+		-map_chapters 0
 		-map 0:v \
-		-map 1:a \
-		-map 2:s \
-		-c:v copy \
-		-c:a copy \
-		-c:s copy \
+		$audioCommand \
+		$subCommand \
+		-map 0:t? \
+		-codec copy \
 		-disposition:s 0 \
+                -max_muxing_queue_size 2048 \
+                -max_interleave_delta 0 \
+		-avoid_negative_ts auto \
 		"$outputFile"
 }
 
@@ -244,52 +305,47 @@ generateFilters () {
 # Converts Dolby Vision to HDR10 by removing the DV side channel.  Leaves the BT2020 video as is.
 convertDolbyVision () {
         # Extracts the video and discards the DV side channel data
-	ffmpeg -y -hide_banner -loglevel error -stats -i "$INPUTFILE" -dn -c:v copy -vbsf hevc_mp4toannexb -f hevc - | \
-		dovi_tool remove - -o "$WIP/video.hevc"
-        # Takes the HEVC stream and inserts into MP4 container
-        echo "ffmpeg -hide_banner -loglevel error -stats -y -fflags +genpts+igndts -i "$WIP/video.hevc" -c:v copy \"$WIP/video.mp4\"" >> "$PARALLEL"
-
-        # Creates final input file parameters and mapping
-        INPUT_LIST="-i $WIP/video.mp4 -i $WIP/audio.mka -i $WIP/subtitles.mkv"
-        MAPPING="-map 1:v -map 2:a -map 3:s? -map 0:t?"
-}
-
-# Runs all tasks in the parallel text file, 6 at a time
-processParallelTasks () {
-	echo "Processing queued parallel tasks"
-	cat "$PARALLEL" | parallel -j 6 --verbose '{}'
-	cat /dev/null > "$PARALLEL"
-}
-
-# Only performs language selection
-processAudioSubs () {
-	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -sn -c:v copy -c:a copy $LANG_OPTIONS \"$WIP/audio.mka\"" >> "$PARALLEL"
-	echo "ffmpeg -hide_banner -loglevel error -stats -y -i \"$INPUTFILE\" -an -map 0:v -c:v copy -c:s copy $LANG_OPTIONS \"$WIP/subtitles.mkv\"" >> "$PARALLEL"
+	ffmpeg -y -hide_banner -stats -fflags +genpts+igndts -loglevel error -i $INPUTFILE -map 0 -bsf:v hevc_metadata=remove_dovi=1 -c:v copy -c:a copy -c:s copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts auto HDR10_remux.mkv
+	INPUTFILE="$WIP/HDR10_remux.mkv"
 }
 
 # Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
-LANG_OPTIONS="" 
 if [ $ANIME -eq 1 ]; then
 	echo "Selecting English and Japanese audio/subtitle tracks."
-        LANG_OPTIONS="-map 0:m:language:eng? -map 0:m:language:jpn?"
+        ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
+            jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' > "$WIP/audio.json"
+        if [ "${emptySubJson}" = 'true' ]; then
+		echo "No subtitle track"
+	else
+        	ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | \
+	            jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' > "$WIP/subtitles.json"
+	fi
 else
 	echo "Selecting English audio/subtitle tracks."
-        LANG_OPTIONS="-map 0:m:language:eng?"
+        ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
+            jq -r '[.streams[] | select(.tags.language == ("eng"))]' > "$WIP/audio.json"
+        if [ "${emptySubJson}" = 'true' ]; then
+                echo "No subtitle track"
+	else
+		ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | \
+                    jq -r '[.streams[] | select(.tags.language == ("eng"))]' > "$WIP/subtitles.json"
+	fi
 fi
 
 # If only converting audio, skip everything else
 if [ $CONVERTAUDIO -eq 1 ] ; then
 	if [ $FOSS -eq 1 ]; then
-		echo "Converting audio to FLAC/Vorbis.  Performing audio/sub language selection."
-		fossAudioConversion
-		processParallelTasks
-		buildAudioMapping
-		convertAudioOnly
+		echo "Converting audio to OPUS.  Performing audio/sub language selection."
+		audioPreProcessing
+		fossAudioMapping
+		subMapping
+		selectLanguageOnly
 	else
 		echo "Language selection and/or audio conversion only"
-		processAudioSubs
-		processParallelTasks
-	        convertAudioOnly
+		audioPreProcessing
+		audioMapping
+		subMapping
+		selectLanguageOnly
 	fi
 
         # WIP cleanup
@@ -307,39 +363,30 @@ splitEpisodes $CHAPTERSEPISODE
 echo "Generating video filter parameters."
 generateFilters
 
+# If the -f 1 option is used, all audio tracks will be converted to OPUS.
+# If a lossless Dolby/DTS codec exists for English and/or Japanese, the lossy tracks
+# will be discarded in favor of converting only the lossless track.
+if [ $FOSS -eq 1 ]; then
+        echo "Converting audio to OPUS.  Performing audio/sub language selection."
+	audioPreProcessing
+	fossAudioMapping
+	subMapping
+else
+        echo "Performing audio/sub language selection."
+	audioPreProcessing
+        audioMapping
+	subMapping
+fi
+
 # If -d 1 option is used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just extract audio and subtitles and perform language selection.
-# Also creates final input file and mapping parameters
+# Must use jellyfin-ffmpeg 7.0.2-4 and newer.
 if [ $DV -eq 1 ]; then
         echo "Converting Dolby Vision to HDR10."
         convertDolbyVision
-        echo "Generating final input list and mappings."
+	av1Encode
 else
         echo "Generating final input list and mappings."
-        INPUT_LIST="-i $WIP/audio.mka -i $WIP/subtitles.mkv"
-        MAPPING="-map 0:v -map 1:a -map 2:s? -map 0:t?"
-fi
-
-# If the -f 1 option is used, all audio tracks will be converted to FOSS audio codecs
-# Lossless codecs will be converted to FLAC. Lossy codecs will be converted to vorbis.
-
-if [ $FOSS -eq 1 ]; then
-	echo "Converting audio to FLAC/Vorbis.  Performing audio/sub language selection."
-        fossAudioConversion
-	processParallelTasks
-	buildAudioMapping
-else
-	echo "Performing audio/sub language selection."
-        processAudioSubs
-	processParallelTasks
-fi
-
-# Iterates through chapter list
-if [ $CONVERTAUDIO -eq 1 ] ; then
-	echo "Muxing new audio with original video."
-        convertAudioOnly
-else
-	echo "Muxing audio with new AV1 video."
-        av1Encode
+	av1Encode
 fi
 
 # WIP cleanup
