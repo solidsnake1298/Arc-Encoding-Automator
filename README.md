@@ -18,6 +18,6 @@ Automates media encoding to AV1, including handling language selection, converti
 - -o Enable with 1.  When enabled, only the language selection is performed.  Can be combined with -f and -a.  -d is ignored.
 
 # Comments
-dovi_tool usage has been deprecated in favor of identical functionality added to Jellyfin-ffmpeg starting in 7.0.2-4.  This, and other changes, has allowed for significant streaming lining.
+dovi_tool usage has been deprecated in favor of identical functionality added to Jellyfin-ffmpeg starting in 7.0.2-4.  This, and other changes, has allowed for significant stream lining of the various work flows.
 
 Upstream ffmpeg has a similar, but not equivalent, functionality in their master branch.  But that functionality has not made it into a release, as far as I can tell.  Additionally, the syntax to activate the feature is different than Jellyfin-ffmpeg.
