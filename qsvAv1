@@ -53,7 +53,7 @@ fi
 # Checks for subtitle track.
 emptySubJson=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq '[.streams[]]' | jq -e '. | length == 0')
 
-# Uses Intel QSV to encode the original or DV converted video to AV1.  Muxes in the converted and/or language selected audio and subtitles.
+# Uses Intel QSV to encode the original or DV converted video to AV1.  Maps the audio tracks for the selected languages, and converts to them to OPUS.
 # Includes attachments if present.  If splitting out episodes from a MKV that came off the disc as a single file, it will loop through for each episode.
 av1Encode () {
 for chapter in $STARTSTOP ; do
@@ -106,7 +106,7 @@ for chapter in $STARTSTOP ; do
 done
 }
 
-# Converts audio to FLAC or vorbis.  Lossless codecs will be converted to FLAC, everything else vorbis.
+# Converts audio to OPUS.  If lossless tracks are present for a language, lossy tracks for that language are ignored.
 audioPreProcessing () {
 	cat /dev/null > "$WIP/audioFinal.txt"
 	emptyAudioJson=$(cat "$WIP/audio.json" | jq -e '. | length == 0')
@@ -167,6 +167,7 @@ audioPreProcessing () {
 	fi
 }
 
+# Uses the tracks selected in the pre-processing function to generate the map parameters for OPUS.
 fossAudioMapping () {
 	audioCommand=""
         while read rawIndex; do
@@ -189,6 +190,7 @@ fossAudioMapping () {
 	echo "$AUDIO_COMMAND $audioCommand" > "$WIP/audioCommand.txt"
 }
 
+# Uses the tracks selected in the pre-processing function to generate the map parameters.
 audioMapping () {
         audioCommand=""
         while read rawIndex; do
@@ -202,6 +204,7 @@ audioMapping () {
         echo "$audioCommand" > "$WIP/audioCommand.txt"
 }
 
+# Uses the tracks selected in the pre-processing function to generate the map parameters.
 subMapping() {
 	subCommand=""
 	firstSub=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[0] | .index' | bc)
@@ -224,7 +227,7 @@ subMapping() {
 	echo "$subCommand" > "$WIP/subCommand.txt"
 }
 
-# Remuxes new audio with original video
+# Maps selected audio/sub tracks to output file.  Converts to OPUS if enabled.
 selectLanguageOnly () {
 	extension=$(echo "$INPUTFILE" | awk -F '.' '{print $NF}')
 	outputFile=$(echo "$INPUTFILE" | sed "s/.${extension}/-audioOnly.mkv/g")
@@ -246,6 +249,7 @@ selectLanguageOnly () {
 		"$outputFile"
 }
 
+# Extracts chapter data from input file.
 splitEpisodes () {
 	chapters=$1
 
@@ -279,6 +283,7 @@ generateFilters () {
 	interlaced=$(echo $rawParams | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}')
 	deinterlaced=""
 
+	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case $interlaced in
 	        tt) deinterlaced="deinterlace=2";;
 	        bb) deinterlaced="deinterlace=2";;
@@ -299,7 +304,7 @@ generateFilters () {
 	cropParams="$deinterlaced:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4"
 
 	# Combines filters
-	FILTERS="`echo $cropParams``echo $rescaleParams`"
+	FILTERS="`echo $cropParams`"
 }
 
 # Converts Dolby Vision to HDR10 by removing the DV side channel.  Leaves the BT2020 video as is.
