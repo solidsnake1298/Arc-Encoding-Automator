@@ -41,7 +41,7 @@ done
 
 WIP=/media/library/wip
 mkdir -p "$WIP"
-rm -f "$WIP/*"
+#rm -f "$WIP/*"
 
 # Checks for required input file name
 if [ -z "$INPUTFILE" ]; then
@@ -338,10 +338,10 @@ fi
 
 # If only converting audio, skip everything else
 if [ $CONVERTAUDIO -eq 1 ] ; then
-	skipConversion=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("aac") or .codec_name == ("mp3") or .codec_name == ("flac") or .codec_name ==("opus")) | .codec_name')
+	skipConversion=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("aac") or .codec_name == ("mp3") or .codec_name == ("flac") or .codec_name ==("opus") or .codec_name ==("vorbis")) | .codec_name')
 	if [[ ! -z "$skipConversion" ]]; then
 		echo "Audio codec already FOSS or widely compatible."
-		rm -f $WIP/*
+		#rm -f $WIP/*
 		exit 2 # used for tracking in another script I use
 	fi
 	if [ $FOSS -eq 1 ]; then
@@ -360,7 +360,7 @@ if [ $CONVERTAUDIO -eq 1 ] ; then
 
         # WIP cleanup
         echo "Cleaning up WIP folder."
-        rm -f $WIP/*
+        #rm -f $WIP/*
         exit 0
 fi
 
@@ -401,4 +401,4 @@ fi
 
 # WIP cleanup
 echo "Cleaning up WIP folder."
-rm -f $WIP/*
+#rm -f $WIP/*
