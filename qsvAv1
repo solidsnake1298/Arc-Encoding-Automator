@@ -20,7 +20,6 @@ RESCALE=0
 FOSS=0
 CONVERTAUDIO=0
 FILTERS=""
-AUDIO_COMMAND="-c:a libopus -vbr on -compression_level 10 -application audio"
 SUB_COMMAND=""
 
 # Reads input paramamters
@@ -169,7 +168,7 @@ audioPreProcessing () {
 
 # Uses the tracks selected in the pre-processing function to generate the map parameters for OPUS.
 fossAudioMapping () {
-	audioCommand=""
+	audioCommand="-c:a libopus -vbr on -compression_level 10 -application audio"
         while read rawIndex; do
 		if [ $rawIndex -eq 0 ]; then
 			index=0
@@ -185,14 +184,14 @@ fossAudioMapping () {
 			opusMapping=0
 		fi
 
-		audioCommand="$audioCommand -ac:a:${index} ${channels} -mapping_family:a:${index} ${opusMapping}"
+		audioCommand="$audioCommand -mapping_family:a:${index} ${opusMapping}"
 	done <<< "$(cat $WIP/audioFinal.txt)"
-	echo "$AUDIO_COMMAND $audioCommand" > "$WIP/audioCommand.txt"
+	echo "$audioCommand" > "$WIP/audioCommand.txt"
 }
 
 # Uses the tracks selected in the pre-processing function to generate the map parameters.
 audioMapping () {
-        audioCommand=""
+        audioCommand="-c:a copy"
         while read rawIndex; do
                 if [ $rawIndex -eq 0 ]; then
                         index=0
@@ -236,12 +235,12 @@ selectLanguageOnly () {
 
 	ffmpeg -y -fflags +genpts+igndts -hide_banner -loglevel error -stats \
 		-i "$INPUTFILE" \
-		-map_chapters 0
+		-map_chapters 0 \
 		-map 0:v \
+		-c:v copy \
 		$audioCommand \
 		$subCommand \
 		-map 0:t? \
-		-codec copy \
 		-disposition:s 0 \
                 -max_muxing_queue_size 2048 \
                 -max_interleave_delta 0 \
@@ -339,6 +338,12 @@ fi
 
 # If only converting audio, skip everything else
 if [ $CONVERTAUDIO -eq 1 ] ; then
+	skipConversion=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("aac") or .codec_name == ("mp3") or .codec_name == ("flac") or .codec_name ==("opus")) | .codec_name')
+	if [[ ! -z "$skipConversion" ]]; then
+		echo "Audio codec already FOSS or widely compatible."
+		rm -f $WIP/*
+		exit 2 # used for tracking in another script I use
+	fi
 	if [ $FOSS -eq 1 ]; then
 		echo "Converting audio to OPUS.  Performing audio/sub language selection."
 		audioPreProcessing
