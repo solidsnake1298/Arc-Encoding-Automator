@@ -105,7 +105,7 @@ for chapter in $STARTSTOP ; do
 done
 }
 
-# Converts audio to OPUS.  If lossless tracks are present for a language, lossy tracks for that language are ignored.
+# Selects English and Japanese audio tracks for processing.  If lossless tracks are present for a language, lossy tracks for that language are ignored.
 audioPreProcessing () {
 	cat /dev/null > "$WIP/audioFinal.txt"
 	emptyAudioJson=$(cat "$WIP/audio.json" | jq -e '. | length == 0')
@@ -188,7 +188,7 @@ audioMapping () {
         echo "$audioCommand" > "$WIP/audioCommand.txt"
 }
 
-# Uses the tracks selected in the pre-processing function to generate the map parameters.
+# Selects and maps English and Japanese subtitle tracks.
 subMapping() {
 	subCommand=""
 	firstTrack=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[0] | .index' | bc)
@@ -197,7 +197,7 @@ subMapping() {
 		echo "No subtitle track"
 		subCommand="-sn"
 	else
-		# If audio language tags are not present, safe to assume sub language tags aren't either
+		# If audio language tags are not present, it is safe to assume subtitle language tags aren't either
 		if [ "${emptyAudioJson}" = 'true' ]; then
 			subCommand="-map 0:s -c:s copy"
 		else
