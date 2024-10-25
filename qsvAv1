@@ -41,7 +41,7 @@ done
 
 WIP=/media/library/wip
 mkdir -p "$WIP"
-#rm -f "$WIP/*"
+rm -f "$WIP/*"
 
 # Checks for required input file name
 if [ -z "$INPUTFILE" ]; then
@@ -117,7 +117,7 @@ audioPreProcessing () {
 
 		# if lossless tracks are present, ignore lossy tracks
 		if [ "${emptyAudioJson}" = 'true' ]; then
-			cat "$WIP/audio.json" > "$WIP/audioFinal.txt"
+			cat "$WIP/audio.json" | jq -r '.[] | .index' > "$WIP/audioFinal.txt"
 		else
 			lossless=$(jq -r '.[] | select(.tags.language == ("eng"))' "$WIP/audio.json" | egrep -i "dts-hd ma|truehd" | head -1)
 			if [ ! -z "$lossless" ]; then
@@ -149,7 +149,7 @@ audioPreProcessing () {
                 fi
 
                 if [ "${emptyAudioJson}" = 'true' ]; then
-		        cat "$WIP/audio.json" > "$WIP/audioFinal.txt"
+			cat "$WIP/audio.json" | jq -r '.[] | .index' > "$WIP/audioFinal.txt"
 		else
                 	lossless=$(egrep -i "dts-hd ma|truehd" "$WIP/audio.json" | head -1)
 	                if [ ! -z "$lossless" ]; then
@@ -169,22 +169,10 @@ audioPreProcessing () {
 # Uses the tracks selected in the pre-processing function to generate the map parameters for OPUS.
 fossAudioMapping () {
 	audioCommand="-c:a libopus -vbr on -compression_level 10 -application audio"
+	firstTrack=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq -r '.streams[0] | .index' | bc)
         while read rawIndex; do
-		if [ $rawIndex -eq 0 ]; then
-			index=0
-		else
-			index=$(echo $(( $rawIndex - 1 | bc)))
-		fi
+		index=$(echo $(( $rawIndex - $firstTrack | bc)))
 		audioCommand="$audioCommand -map 0:a:${index}"
-                channels=$(jq --arg l $index '.[$l|fromjson].channels' "$WIP/audio.json")
-		
-		if [ $channels -gt 2 ]; then
-			opusMapping=1
-		else
-			opusMapping=0
-		fi
-
-		audioCommand="$audioCommand -mapping_family:a:${index} ${opusMapping}"
 	done <<< "$(cat $WIP/audioFinal.txt)"
 	echo "$audioCommand" > "$WIP/audioCommand.txt"
 }
@@ -192,12 +180,9 @@ fossAudioMapping () {
 # Uses the tracks selected in the pre-processing function to generate the map parameters.
 audioMapping () {
         audioCommand="-c:a copy"
+	firstTrack=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq -r '.streams[0] | .index' | bc)
         while read rawIndex; do
-                if [ $rawIndex -eq 0 ]; then
-                        index=0
-                else
-                        index=$(echo $(( $rawIndex - 1 | bc)))
-                fi
+		index=$(echo $(( $rawIndex - $firstTrack | bc)))
                 audioCommand="$audioCommand -map 0:a:${index}"
         done <<< "$(cat $WIP/audioFinal.txt)"
         echo "$audioCommand" > "$WIP/audioCommand.txt"
@@ -206,7 +191,7 @@ audioMapping () {
 # Uses the tracks selected in the pre-processing function to generate the map parameters.
 subMapping() {
 	subCommand=""
-	firstSub=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[0] | .index' | bc)
+	firstTrack=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[0] | .index' | bc)
 	# Checks for no subtitle track.  Common for older fansubs with burned in subtitles.
 	if [ "${emptySubJson}" = 'true' ]; then
 		echo "No subtitle track"
@@ -218,7 +203,7 @@ subMapping() {
 		else
 			subCommand="-c:s copy"
 			while read rawIndex; do
-				index=$(echo $(( $rawIndex - $firstSub | bc)))
+				index=$(echo $(( $rawIndex - $firstTrack | bc)))
 				subCommand="$subCommand -map 0:s:$index"
 			done <<< "$(jq '.[].index' $WIP/subtitles.json)"
 		fi
@@ -341,7 +326,7 @@ if [ $CONVERTAUDIO -eq 1 ] ; then
 	skipConversion=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("aac") or .codec_name == ("mp3") or .codec_name == ("flac") or .codec_name ==("opus") or .codec_name ==("vorbis")) | .codec_name')
 	if [[ ! -z "$skipConversion" ]]; then
 		echo "Audio codec already FOSS or widely compatible."
-		#rm -f $WIP/*
+		rm -f $WIP/*
 		exit 2 # used for tracking in another script I use
 	fi
 	if [ $FOSS -eq 1 ]; then
@@ -360,7 +345,7 @@ if [ $CONVERTAUDIO -eq 1 ] ; then
 
         # WIP cleanup
         echo "Cleaning up WIP folder."
-        #rm -f $WIP/*
+        rm -f $WIP/*
         exit 0
 fi
 
@@ -401,4 +386,4 @@ fi
 
 # WIP cleanup
 echo "Cleaning up WIP folder."
-#rm -f $WIP/*
+rm -f $WIP/*
