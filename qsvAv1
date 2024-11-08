@@ -53,8 +53,9 @@ fi
 emptySubJson=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq -e '.streams | length == 0')
 untaggedSubJson=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' | jq -e '. | length == 0')
 
-# Uses Intel QSV to encode the original or DV converted video to AV1.  Maps the audio tracks for the selected languages, and converts to them to OPUS.
+# Uses Intel QSV to encode the original AV1.  Maps the audio tracks for the selected languages, and converts to them to OPUS.
 # Includes attachments if present.  If splitting out episodes from a MKV that came off the disc as a single file, it will loop through for each episode.
+# If using jellyfin-ffmpeg7.0.2-4 and newer, DV 7.6 and 8 will automatically be stripped.
 av1Encode () {
 for chapter in $STARTSTOP ; do
 	audioCommand=$(cat "$WIP/audioCommand.txt")
@@ -73,7 +74,12 @@ for chapter in $STARTSTOP ; do
         startTime=$(jq .chapters[$begin].start_time "$WIP/chapters.json" | sed 's/\"//g')
         endTime=$(jq .chapters[$end].end_time "$WIP/chapters.json" | sed 's/\"//g')
         ffmpeg \
-                -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 -y -hide_banner -stats -fflags +genpts+igndts -loglevel error \
+		-y \
+                -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 \
+		-hide_banner \
+		-stats \
+		-fflags +genpts+igndts \
+		-loglevel error \
                 -init_hw_device qsv=qs@va \
                 -filter_hw_device qs \
                 -hwaccel qsv \
@@ -298,10 +304,11 @@ generateFilters () {
 }
 
 # Converts Dolby Vision to HDR10 by removing the DV side channel.  Leaves the BT2020 video as is.
+# Does not perform any audio/subtitle track selection.  Does not perform any encoding.  Simply removes DV.
 convertDolbyVision () {
+	outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-HDR10.mkv/g")
         # Extracts the video and discards the DV side channel data
-	ffmpeg -y -hide_banner -stats -fflags +genpts+igndts -loglevel error -i $INPUTFILE -map 0 -bsf:v hevc_metadata=remove_dovi=1 -codec copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "$WIP/HDR10.mkv"
-	INPUTFILE="$WIP/HDR10.mkv"
+	ffmpeg -y -hide_banner -stats -fflags +genpts+igndts -loglevel error -i $INPUTFILE -map 0 -bsf:v hevc_metadata=remove_dovi=1 -codec copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "$outputFile"
 }
 
 # Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
@@ -389,12 +396,11 @@ else
 	subMapping
 fi
 
-# If -d 1 option is used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just extract audio and subtitles and perform language selection.
+# If -d 1 option is used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just select audio and subtitles tracks and perform language selection.
 # Must use jellyfin-ffmpeg 7.0.2-4 and newer.
 if [ $DV -eq 1 ]; then
         echo "Converting Dolby Vision to HDR10."
         convertDolbyVision
-	av1Encode
 else
         echo "Generating final input list and mappings."
 	av1Encode
