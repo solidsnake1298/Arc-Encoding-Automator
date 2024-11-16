@@ -90,7 +90,6 @@ for chapter in $STARTSTOP ; do
                 -map_chapters 0 \
 		-map 0:v \
                 -c:v av1_qsv \
-		-pix_fmt yuv420p10le \
                 -q:v 22 \
                 -look_ahead_depth 40 \
                 -preset veryslow \
@@ -275,8 +274,12 @@ splitEpisodes () {
 # Generates video filters for vpp_qsv
 generateFilters () {
 	# ffprobe to determine if interlaced.  If yes, set yadif deinterlace filter.
-	rawParams=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams v:0  -show_entries stream=width,height,field_order)
+	rawParams=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams v:0 -show_entries stream=width,height,field_order,pix_fmt,sample_aspect_ratio)
 	interlaced=$(echo $rawParams | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}')
+	inputBitDepth=$(echo $rawParams | grep -o 'pix_fmt=[a-z,0-9]\+' | awk -F '=' '{print $2}')
+	sar=$(echo $rawParams | grep -o 'sample_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}')
+	width=$(echo $rawParams | grep -o 'width=[0-9]\+' | awk -F '=' '{print $2}')
+	height=$(echo $rawParams | grep -o 'height=[0-9]\+' | awk -F '=' '{print $2}')
 	deinterlaced=""
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
@@ -296,11 +299,27 @@ generateFilters () {
 	x=$(echo $rawCrop | awk -F ":" '{print $3}')
 	y=$(echo $rawCrop | awk -F ":" '{print $4}')
 
-	# Combines crop and deterinterlace filters.  Always present.
-	cropParams="$deinterlaced:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4"
+	inputFormat=""
 
-	# Combines filters
-	FILTERS="`echo $cropParams`"
+	if [[ "$inputBitDepth" == *"p10le"* ]] || [[ "$inputBitDepth" == *"p12le"* ]]; then
+		inputFormat="p010le"
+	else
+		inputFormat="nv12"
+	fi
+
+	if [[ "$sar" != "1:1" ]]; then
+		sarRatio1=$(echo $sar | awk -F ':' '{print $1}')
+		sarRatio2=$(echo $sar | awk -F ':' '{print $2}')
+		sarRatio=$(awk "BEGIN {print $sarRatio1 / $sarRatio2}")
+		darRatio=$(awk "BEGIN {print $width / $height}")
+                ratio=$(awk "BEGIN {print $darRatio * $sarRatio}")
+                h_float=$(awk "BEGIN {print $w / $ratio}" | bc)
+                h_scale=$(printf "%.0f" $h_float)
+		FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,hwdownload,format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w:h=$h_scale:format=p010le"
+	else
+		# Combines crop and deterinterlace filters.  Always present.
+		FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4:format=p010le"
+        fi
 }
 
 # Converts Dolby Vision to HDR10 by removing the DV side channel.  Leaves the BT2020 video as is.
