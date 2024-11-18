@@ -307,19 +307,31 @@ generateFilters () {
 		inputFormat="nv12"
 	fi
 
-	if [[ "$sar" != "1:1" ]]; then
-		sarRatio1=$(echo $sar | awk -F ':' '{print $1}')
-		sarRatio2=$(echo $sar | awk -F ':' '{print $2}')
-		sarRatio=$(awk "BEGIN {print $sarRatio1 / $sarRatio2}")
-		darRatio=$(awk "BEGIN {print $width / $height}")
-                ratio=$(awk "BEGIN {print $darRatio * $sarRatio}")
-                h_float=$(awk "BEGIN {print $w / $ratio}" | bc)
-                h_scale=$(printf "%.0f" $h_float)
+	# RESCALE=1 forces 16:9 ratio.  Some poorly mastered DVDs will have a SAR and DAR that don't result
+	# in the ratio equaling 16:9.  RESCALE=2 forces 4:3 ratio.  Else dynamically determine DAR and set SAR to 1:1.
+	if [ $RESCALE -eq 1 ]; then
+		h_float=$(awk "BEGIN {print $w / 1.777777778}" | bc)
+		h_scale=$(printf "%.0f" $h_float)
+		FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,hwdownload,format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w:h=$h_scale:format=p010le"
+	elif [ $RESCALE -eq 2 ]; then
+		h_float=$(awk "BEGIN {print $w / 1.333333334}" | bc)
+		h_scale=$(printf "%.0f" $h_float)
 		FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,hwdownload,format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w:h=$h_scale:format=p010le"
 	else
-		# Combines crop and deterinterlace filters.  Always present.
-		FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4:format=p010le"
-        fi
+		if [[ "$sar" != "1:1" ]]; then
+			sarRatio1=$(echo $sar | awk -F ':' '{print $1}')
+			sarRatio2=$(echo $sar | awk -F ':' '{print $2}')
+			sarRatio=$(awk "BEGIN {print $sarRatio1 / $sarRatio2}")
+			darRatio=$(awk "BEGIN {print $width / $height}")
+	                ratio=$(awk "BEGIN {print $darRatio * $sarRatio}")
+	                h_float=$(awk "BEGIN {print $w / $ratio}" | bc)
+	                h_scale=$(printf "%.0f" $h_float)
+			FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,hwdownload,format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w:h=$h_scale:format=p010le"
+		else
+			FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4:format=p010le"
+	        fi
+	fi
+
 }
 
 # Converts Dolby Vision to HDR10 by removing the DV side channel.  Leaves the BT2020 video as is.
@@ -404,10 +416,18 @@ generateFilters
 # If a lossless Dolby/DTS codec exists for English and/or Japanese, the lossy tracks
 # will be discarded in favor of converting only the lossless track.
 if [ $FOSS -eq 1 ]; then
-        echo "Converting audio to OPUS.  Performing audio/sub language selection."
-	audioPreProcessing
-	fossAudioMapping
-	subMapping
+        skipConversion=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("aac") or .codec_name == ("mp3") or .codec_name == ("flac") or .codec_name ==("opus") or .codec_name ==("vorbis")) | .codec_name')
+        if [[ ! -z "$skipConversion" ]]; then
+                echo "Audio codec already FOSS or widely compatible."
+		audioPreProcessing
+		audioMapping
+		subMapping
+	else
+        	echo "Converting audio to OPUS.  Performing audio/sub language selection."
+		audioPreProcessing
+		fossAudioMapping
+		subMapping
+	fi
 else
         echo "Performing audio/sub language selection."
 	audioPreProcessing
