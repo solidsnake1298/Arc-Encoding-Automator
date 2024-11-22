@@ -14,13 +14,15 @@
 # Variable initialization.  Work-in-progress initialization and cleanup.
 INPUTFILE=""
 CHAPTERSEPISODE=0
-DV=0
 ANIME=0
 RESCALE=0
-FOSS=0
-CONVERTAUDIO=0
 FILTERS=""
-SUB_COMMAND=""
+CHAPTERFILES=""
+FINALAUDIO=""
+SELECTEDAUDIO=""
+SELECTEDSUBS=""
+AUDIOCOMMAND=""
+SUBCOMMAND=""
 
 # Reads input paramamters
 while getopts i:c:d:a:r:f:s:e:o: option; do
@@ -39,40 +41,36 @@ while getopts i:c:d:a:r:f:s:e:o: option; do
         esac
 done
 
-WIP=/media/library/wip
-mkdir -p "$WIP"
-rm -f "$WIP/*"
-
+mkdir WIP
 # Checks for required input file name
 if [ -z "$INPUTFILE" ]; then
         echo "No input file was provided."
         exit 1
 fi
 
-# Checks for subtitle track.
-emptySubJson=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq -e '.streams | length == 0')
-untaggedSubJson=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' | jq -e '. | length == 0')
+# Get ffprobe info to be used by other functions.
+AUDIOFFPROBE=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json)
+SUBFFPROBE=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json)
+EMPTYAUDIOJSON=""
+
+# Checks for subtitle track or untagged subtitle tracks.
+EMPTYSUBJSON=$(jq -e '.streams | length == 0' <<< "$SUBFFPROBE")
+UNTAGGEDSUBJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$SUBFFPROBE" | jq -e '. | length == 0')
 
 # Uses Intel QSV to encode the original AV1.  Maps the audio tracks for the selected languages, and converts to them to OPUS.
 # Includes attachments if present.  If splitting out episodes from a MKV that came off the disc as a single file, it will loop through for each episode.
 # If using jellyfin-ffmpeg7.0.2-4 and newer, DV 7.6 and 8 will automatically be stripped.
 av1Encode () {
-for chapter in $STARTSTOP ; do
-	audioCommand=$(cat "$WIP/audioCommand.txt")
-	subCommand=$(cat "$WIP/subCommand.txt")
-        begin=$(echo $chapter | awk -F ':' '{print $1}')
-        end=$(echo $chapter | awk -F ':' '{print $2}')
-        startTime=$(jq .chapters[$begin].start_time "$WIP/chapters.json" | sed 's/\"//g')
-        endTime=$(jq .chapters[$end].end_time "$WIP/chapters.json" | sed 's/\"//g')
-	chapterSelect=""
-        if [ $CHAPTERSEPISODE -eq 0 ]; then
-                outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-all.mkv/g")
-        else
-                outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-chapter-$begin-$end.mkv/g")
-		chapterSelect="-ss $startTime -to $endTime"
-        fi
-        startTime=$(jq .chapters[$begin].start_time "$WIP/chapters.json" | sed 's/\"//g')
-        endTime=$(jq .chapters[$end].end_time "$WIP/chapters.json" | sed 's/\"//g')
+echo -e "$CHAPTERFILES" | while read file; do
+	inputFile="$file"
+	local audioCommand=$(audioMapping)
+	local subCommand=$(subMapping)
+	ext=$(echo $inputFile | awk -F '.' '{print $NF}')
+	if [ $CHAPTERSEPISODE -eq 0 ]; then
+		outputFile=$(echo $inputFile | awk -F '/' '{print $NF}' | sed "s/.$ext/-all.$ext/g")
+	else
+		outputFile=$(echo $inputFile | awk -F '/' '{print $NF}')
+	fi
         ffmpeg \
 		-y \
                 -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 \
@@ -85,8 +83,7 @@ for chapter in $STARTSTOP ; do
                 -hwaccel qsv \
                 -hwaccel_output_format qsv \
 		-extra_hw_frames 40 \
-                -i "$INPUTFILE" \
-                $chapterSelect \
+                -i "$inputFile" \
                 -map_chapters 0 \
 		-map 0:v \
                 -c:v av1_qsv \
@@ -107,141 +104,110 @@ for chapter in $STARTSTOP ; do
 		-max_muxing_queue_size 2048 \
 		-max_interleave_delta 0 \
 		-avoid_negative_ts disabled \
-                "$outputFile"
+                "$outputFile" < /dev/null
 done
 }
 
 # Selects English and Japanese audio tracks for processing.  If lossless tracks are present for a language, lossy tracks for that language are ignored.
-audioPreProcessing () {
-	cat /dev/null > "$WIP/audioFinal.txt"
-	emptyAudioJson=$(cat "$WIP/audio.json" | jq -e '. | length == 0')
+audioMapping () {
 	if [ $ANIME -eq 1 ]; then
 		# checks if audio.json is empty due to untagged streams
-		if [ "${emptyAudioJson}" = 'true' ]; then
-			ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[]]' > "$WIP/audio.json"
+		if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
+			SELECTEDAUDIO=$(jq '[.streams[]]' <<< "$AUDIOFFPROBE")
 		fi
 
 		# if lossless tracks are present, ignore lossy tracks
-		if [ "${emptyAudioJson}" = 'true' ]; then
-			cat "$WIP/audio.json" | jq -r '.[] | .index' > "$WIP/audioFinal.txt"
+		if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
+			FINALAUDIO=$(jq -r '.[] | .index' <<< "$SELECTEDAUDIO")
 		else
-			lossless=$(jq -r '.[] | select(.tags.language == ("eng"))' "$WIP/audio.json" | egrep -i "dts-hd ma|truehd" | head -1)
+			lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "$SELECTEDAUDIO" | egrep -i "dts-hd ma|truehd" | head -1)
 			if [ ! -z "$lossless" ]; then
 				codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 				if [ ! -z "`echo $codec | grep -i dts`" ]; then
-					cat "$WIP/audio.json" | jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' >> "$WIP/audioFinal.txt"
+					FINALAUDIOENG=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
 				elif [ ! -z "`echo $codec | grep -i truehd`" ]; then
-					cat "$WIP/audio.json" | jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' >> "$WIP/audioFinal.txt"
+					FINALAUDIOENG=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
 				fi
 			else
-				cat "$WIP/audio.json" | jq -r '.[] | select(.tags.language == ("eng")) | .index' >> "$WIP/audioFinal.txt"
+				FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
 			fi
-                        lossless=$(jq -r '.[] | select(.tags.language == ("jpn"))' "$WIP/audio.json" | egrep -i "dts-hd ma|truehd" | head -1)
+                        lossless=$(jq -r '.[] | select(.tags.language == ("jpn"))' <<< "$SELECTEDAUDIO" | egrep -i "dts-hd ma|truehd" | head -1)
                         if [ ! -z "$lossless" ]; then
                                 codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo $codec | grep -i dts`" ]; then
-					cat "$WIP/audio.json" | jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("jpn")) | .index' >> "$WIP/audioFinal.txt"
+					FINALAUDIO="${FINALAUDIO}\n$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("jpn")) | .index' <<< "$SELECTEDAUDIO")"
                                 elif [ ! -z "`echo $codec | grep -i truehd`" ]; then
-					cat "$WIP/audio.json" | jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("jpn")) | .index' >> "$WIP/audioFinal.txt"
+					FINALAUDIO="${FINALAUDIO}\n$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("jpn")) | .index' <<< "$SELECTEDAUDIO")"
                                 fi
                         else
-				cat "$WIP/audio.json" | jq -r '.[] | select(.tags.language == ("jpn")) | .index' >> "$WIP/audioFinal.txt"
+				FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.tags.language == ("jpn")) | .index' <<< "$SELECTEDAUDIO")"
                         fi
 		fi
         else
                 # checks if audio.json is empty due to untagged streams
-                if [ "${emptyAudioJson}" = 'true' ]; then
-                        ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq '[.streams[]]' > "$WIP/audio.json"
-                fi
-
-                if [ "${emptyAudioJson}" = 'true' ]; then
-			cat "$WIP/audio.json" | jq -r '.[] | .index' > "$WIP/audioFinal.txt"
+                if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
+			SELECTEDAUDIO=$(jq '[.streams[]]' <<< "$AUDIOFFPROBE")
+			FINALAUDIO=$(jq -r '.[] | .index' <<< "$SELECTEDAUDIO")
 		else
-                	lossless=$(egrep -i "dts-hd ma|truehd" "$WIP/audio.json" | head -1)
+                	lossless=$(echo $SELECTEDAUDIO | egrep -i "dts-hd ma|truehd" | head -1)
 	                if [ ! -z "$lossless" ]; then
 	                        codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 	                        if [ ! -z "`echo $codec | grep -i dts`" ]; then
-					cat "$WIP/audio.json" | jq -r '.[] | select(.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) | .index' >> "$WIP/audioFinal.txt"
+					FINALAUDIO=$(jq -r '.[] | select(.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) | .index' <<< "$SELECTEDAUDIO")
 	                        elif [ ! -z "`echo $codec | grep -i truehd`" ]; then
-					cat "$WIP/audio.json" | jq -r '.[] | select(.codec_name == ("truehd")) | .index' >> "$WIP/audioFinal.txt"
+					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd")) | .index' <<< "$SELECTEDAUDIO")
 	                        fi
 	                else
-				cat "$WIP/audio.json" | jq -r '.[] | select(.tags.language == ("eng")) | .index' >> "$WIP/audioFinal.txt"
+				FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
 	                fi        
 		fi
 	fi
-}
-
-# Uses the tracks selected in the pre-processing function to generate the map parameters for OPUS.
-fossAudioMapping () {
-	audioCommand="-c:a libopus -vbr on -compression_level 10 -application audio"
-	firstTrack=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq -r '.streams[0] | .index' | bc)
-        while read rawIndex; do
-		index=$(echo $(( $rawIndex - $firstTrack | bc)))
-		channels=$(jq --arg l $index '.[$l|fromjson].channels' "$WIP/audio.json")
-		if [ $channels -gt 2 -a $channels -lt 6 ]; then
-			audioCommand="$audioCommand -mapping_family 1 -ac ${channels} -map 0:a:${index}"
-		else
-			audioCommand="$audioCommand -map 0:a:${index}"
-		fi
-	done <<< "$(cat $WIP/audioFinal.txt)"
-	echo "$audioCommand" > "$WIP/audioCommand.txt"
-}
-
-# Uses the tracks selected in the pre-processing function to generate the map parameters.
-audioMapping () {
-        audioCommand="-c:a copy"
-	firstTrack=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq -r '.streams[0] | .index' | bc)
-        while read rawIndex; do
-		index=$(echo $(( $rawIndex - $firstTrack | bc)))
-                audioCommand="$audioCommand -map 0:a:${index}"
-        done <<< "$(cat $WIP/audioFinal.txt)"
-        echo "$audioCommand" > "$WIP/audioCommand.txt"
+	
+	skipConversion=$(jq -r '.[] | select(.codec_name == ("aac") or .codec_name == ("mp3") or .codec_name == ("flac") or .codec_name ==("opus") or .codec_name ==("vorbis")) | .codec_name' <<< "$SELECTEDAUDIO")
+	if [[ ! -z "$skipConversion" ]]; then
+		#echo "Audio codec already FOSS or widely compatible."
+        	AUDIOCOMMAND="-c:a copy"
+		firstTrack=$(jq -r '.streams[0] | .index' <<< "$AUDIOFFPROBE" | bc)
+		for rawIndex in $FINALAUDIO; do
+			index=$(awk "BEGIN {print $rawIndex - $firstTrack}" | bc)
+	                AUDIOCOMMAND="$AUDIOCOMMAND -map 0:a:${index}"
+	        done
+	else
+		AUDIOCOMMAND="-c:a libopus -vbr on -compression_level 10 -application audio"
+		firstTrack=$(jq -r '.streams[0] | .index' <<< "$AUDIOFFPROBE" | bc)
+		for rawIndex in $FINALAUDIO; do
+			index=$(awk "BEGIN {print $rawIndex - $firstTrack}" | bc)
+			channels=$(jq --arg l $index '.[$l|fromjson].channels' <<< "$SELECTEDAUDIO")
+			if [ $channels -gt 2 -a $channels -lt 6 ]; then
+				AUDIOCOMMAND="$AUDIOCOMMAND -mapping_family 1 -ac ${channels} -map 0:a:${index}"
+			else
+				AUDIOCOMMAND="$AUDIOCOMMAND -map 0:a:${index}"
+			fi
+		done
+	fi
+	echo "$AUDIOCOMMAND"
 }
 
 # Selects and maps English and Japanese subtitle tracks.
-subMapping() {
-	subCommand=""
-	firstTrack=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[0] | .index' | bc)
+subMapping () {
+	firstTrack=$(jq -r '.streams[0] | .index' <<< "$SUBFFPROBE" | bc)
 	# Checks for no subtitle track.  Common for older fansubs with burned in subtitles.
-	if [ "${emptySubJson}" = 'true' ]; then
-		echo "No subtitle track"
-		subCommand="-sn"
+	if [ "${EMPTYSUBJSON}" = 'true' ]; then
+		#echo "No subtitle track"
+		SUBCOMMAND="-sn"
 	else
 		# If audio language tags are not present, it is safe to assume subtitle language tags aren't either
-		if [ "${emptyAudioJson}" = 'true' ]; then
-			subCommand="-map 0:s -c:s copy"
+		if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
+			SUBCOMMAND="-map 0:s -c:s copy"
 		else
-			subCommand="-c:s copy"
+			SUBCOMMAND="-c:s copy"
 			while read rawIndex; do
-				index=$(echo $(( $rawIndex - $firstTrack | bc)))
-				subCommand="$subCommand -map 0:s:$index"
-			done <<< "$(jq '.[].index' $WIP/subtitles.json)"
+				index=$(awk "BEGIN {print $rawIndex - $firstTrack}" | bc)
+				SUBCOMMAND="$SUBCOMMAND -map 0:s:$index"
+			done <<< "$(jq '.[].index' <<< "$SELECTEDSUBS")"
 		fi
 	fi
-	echo "$subCommand" > "$WIP/subCommand.txt"
-}
-
-# Maps selected audio/sub tracks to output file.  Converts to OPUS if enabled.
-selectLanguageOnly () {
-	extension=$(echo "$INPUTFILE" | awk -F '.' '{print $NF}')
-	outputFile=$(echo "$INPUTFILE" | sed "s/.${extension}/-audioOnly.mkv/g")
-	audioCommand=$(cat "$WIP/audioCommand.txt")	
-	subCommand=$(cat "$WIP/subCommand.txt")
-
-	ffmpeg -y -fflags +genpts+igndts -hide_banner -loglevel error -stats \
-		-i "$INPUTFILE" \
-		-map_chapters 0 \
-		-map 0:v \
-		-c:v copy \
-		$audioCommand \
-		$subCommand \
-		-map 0:t? \
-		-disposition:s 0 \
-                -max_muxing_queue_size 2048 \
-                -max_interleave_delta 0 \
-		-avoid_negative_ts disabled \
-		"$outputFile"
+	echo "$SUBCOMMAND"
 }
 
 # Extracts chapter data from input file.
@@ -249,10 +215,10 @@ splitEpisodes () {
 	chapters=$1
 
 	# Probes videos for chapter information and prints to text file
-	ffprobe -loglevel error -i "$INPUTFILE" -print_format json -show_chapters -loglevel error > "$WIP/chapters.json"
+	chapterProbe=$(ffprobe -loglevel error -i "$INPUTFILE" -print_format json -show_chapters -loglevel error)
 
         # Parses json file for the start time of each chapter.  Also counts number of chapters
-        rawChapters=$(jq .chapters[].start_time "$WIP/chapters.json" | wc -l)
+        rawChapters=$(echo $chapterProbe | jq .chapters[].start_time | wc -l)
         # ffmpeg chapters start at zero.  Subtracting 1 to align with last chapter.
         totalChapters=$(echo $(($rawChapters - 1)) | bc)
 
@@ -264,10 +230,21 @@ splitEpisodes () {
 			first=$i
 		        last=$(echo $(($i + $CHAPTERSEPISODE - 1)) | bc)
 		        STARTSTOP=$(echo "$STARTSTOP $first:$last")
+        
+			startTime=$(jq .chapters[$first].start_time <<< "$chapterProbe" | sed 's/\"//g')
+		        endTime=$(jq .chapters[$last].end_time <<< "$chapterProbe" | sed 's/\"//g')
+			ext=$(echo $INPUTFILE | awk -F '.' '{print $NF}')
+			outputFile=$(echo $INPUTFILE | sed "s/.$ext//g")
+        	        chapterSelect="-ss $startTime -to $endTime"
+			segmentFile=$(echo "WIP/${first}-${last}-${outputFile}.mkv")
+
+			ffmpeg -y -fflags +genpts+igndts -i "$INPUTFILE" -map 0 -codec copy $chapterSelect -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "$segmentFile" < /dev/null
+			CHAPTERFILES="${CHAPTERFILES}\n${segmentFile}"
+
 		        i=$(echo $(($i + $CHAPTERSEPISODE)) | bc)
-	        done
+		done
 	else
-		STARTSTOP="0:$totalChapters"
+		CHAPTERFILES=$(echo "$INPUTFILE")
 	fi
 }
 
@@ -314,9 +291,9 @@ generateFilters () {
 		h_scale=$(printf "%.0f" $h_float)
 		FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,hwdownload,format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w:h=$h_scale:format=p010le"
 	elif [ $RESCALE -eq 2 ]; then
-		h_float=$(awk "BEGIN {print $w / 1.333333334}" | bc)
-		h_scale=$(printf "%.0f" $h_float)
-		FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,hwdownload,format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w:h=$h_scale:format=p010le"
+		w_float=$(awk "BEGIN {print $w / 1.125}" | bc)
+		w_scale=$(printf "%.0f" $w_float)
+		FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,hwdownload,format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w_scale:h=$h:format=p010le"
 	else
 		if [[ "$sar" != "1:1" ]]; then
 			sarRatio1=$(echo $sar | awk -F ':' '{print $1}')
@@ -334,73 +311,32 @@ generateFilters () {
 
 }
 
-# Converts Dolby Vision to HDR10 by removing the DV side channel.  Leaves the BT2020 video as is.
-# Does not perform any audio/subtitle track selection.  Does not perform any encoding.  Simply removes DV.
-convertDolbyVision () {
-	outputFile=$(echo "$INPUTFILE" | sed "s/.mkv/-HDR10.mkv/g")
-        # Extracts the video and discards the DV side channel data
-	ffmpeg -y -hide_banner -stats -fflags +genpts+igndts -loglevel error -i $INPUTFILE -map 0 -bsf:v hevc_metadata=remove_dovi=1 -codec copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "$outputFile"
-}
-
 # Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
 if [ $ANIME -eq 1 ]; then
 	echo "Selecting English and Japanese audio/subtitle tracks."
-        ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
-            jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' > "$WIP/audio.json"
-        if [ "${untaggedSubJson}" = 'true' ]; then
-                if [ "${emptySubJson}" = 'true' ]; then
+	SELECTEDAUDIO=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$AUDIOFFPROBE")
+	EMPTYAUDIOJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$AUDIOFFPROBE" | jq -e '. | length == 0')
+        if [ "${UNTAGGEDSUBJSON}" = 'true' ]; then
+                if [ "${EMPTYSUBJSON}" = 'true' ]; then
                         echo "No subtitle track"
                 else
-                        ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | \
-                           jq -r '[.streams[]]' > "$WIP/subtitles.json"
+			SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "$SUBFFPROBE")
                 fi
         else
-                ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | \
-                   jq -r '[.streams[] | select(.tags.language == ("eng"))]' > "$WIP/subtitles.json"
+		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng"))]' <<< "$SUBFFPROBE")
         fi
 else
 	echo "Selecting English audio/subtitle tracks."
-        ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | \
-            jq -r '[.streams[] | select(.tags.language == ("eng"))]' > "$WIP/audio.json"
-        if [ "${untaggedSubJson}" = 'true' ]; then
-        	if [ "${emptySubJson}" = 'true' ]; then
+        SELECTEDAUDIO=$(jq -r '[.streams[] | select(.tags.language == ("eng"))]' <<< "$AUDIOFFPROBE")
+        if [ "${UNTAGGEDSUBJSON}" = 'true' ]; then
+        	if [ "${EMPTYSUBJSON}" = 'true' ]; then
 			echo "No subtitle track"
 		else
-			ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | \
-		           jq -r '[.streams[]]' > "$WIP/subtitles.json"
+			SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "$SUBFFPROBE")
 		fi
 	else
-		ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json | \
-	           jq -r '[.streams[] | select(.tags.language == ("eng"))]' > "$WIP/subtitles.json"
+		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng"))]' <<< "$SUBFFPROBE")
 	fi
-fi
-
-# If only converting audio, skip everything else
-if [ $CONVERTAUDIO -eq 1 ] ; then
-	skipConversion=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("aac") or .codec_name == ("mp3") or .codec_name == ("flac") or .codec_name ==("opus") or .codec_name ==("vorbis")) | .codec_name')
-	if [[ ! -z "$skipConversion" ]]; then
-		echo "Audio codec already FOSS or widely compatible."
-		rm -f $WIP/*
-		exit 2 # used for tracking in another script I use
-	fi
-	if [ $FOSS -eq 1 ]; then
-		echo "Converting audio to OPUS.  Performing audio/sub language selection."
-		audioPreProcessing
-		fossAudioMapping
-		subMapping
-		selectLanguageOnly
-	else
-		echo "Language selection and/or audio conversion only"
-		audioPreProcessing
-		audioMapping
-		subMapping
-		selectLanguageOnly
-	fi
-
-        # WIP cleanup
-        echo "Cleaning up WIP folder."
-        rm -f $WIP/*
-        exit 0
 fi
 
 # If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
@@ -415,36 +351,7 @@ generateFilters
 # If the -f 1 option is used, all audio tracks will be converted to OPUS.
 # If a lossless Dolby/DTS codec exists for English and/or Japanese, the lossy tracks
 # will be discarded in favor of converting only the lossless track.
-if [ $FOSS -eq 1 ]; then
-        skipConversion=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("aac") or .codec_name == ("mp3") or .codec_name == ("flac") or .codec_name ==("opus") or .codec_name ==("vorbis")) | .codec_name')
-        if [[ ! -z "$skipConversion" ]]; then
-                echo "Audio codec already FOSS or widely compatible."
-		audioPreProcessing
-		audioMapping
-		subMapping
-	else
-        	echo "Converting audio to OPUS.  Performing audio/sub language selection."
-		audioPreProcessing
-		fossAudioMapping
-		subMapping
-	fi
-else
-        echo "Performing audio/sub language selection."
-	audioPreProcessing
-        audioMapping
-	subMapping
-fi
-
-# If -d 1 option is used, converts Dolby Vision to HDR10.  Tested with DV 7.6 and 8.1.  Else just select audio and subtitles tracks and perform language selection.
-# Must use jellyfin-ffmpeg 7.0.2-4 and newer.
-if [ $DV -eq 1 ]; then
-        echo "Converting Dolby Vision to HDR10."
-        convertDolbyVision
-else
-        echo "Generating final input list and mappings."
-	av1Encode
-fi
+av1Encode
 
 # WIP cleanup
-echo "Cleaning up WIP folder."
-rm -f $WIP/*
+rm -rf WIP/
