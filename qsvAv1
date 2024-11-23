@@ -67,7 +67,7 @@ echo -e "$CHAPTERFILES" | while read file; do
 	local subCommand=$(subMapping)
 	ext=$(echo $inputFile | awk -F '.' '{print $NF}')
 	if [ $CHAPTERSEPISODE -eq 0 ]; then
-		outputFile=$(echo $inputFile | awk -F '/' '{print $NF}' | sed "s/.$ext/-all.$ext/g")
+		outputFile=$(echo $inputFile | awk -F '/' '{print $NF}' | sed "s/.$ext/-all.mkv/g")
 	else
 		outputFile=$(echo $inputFile | awk -F '/' '{print $NF}')
 	fi
