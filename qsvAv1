@@ -149,7 +149,7 @@ audioMapping () {
 			SELECTEDAUDIO=$(jq '[.streams[]]' <<< "$AUDIOFFPROBE")
 			FINALAUDIO=$(jq -r '.[] | .index' <<< "$SELECTEDAUDIO")
 		else
-                	lossless=$(echo $SELECTEDAUDIO | egrep -i "dts-hd ma|truehd" | head -1)
+                	lossless=$(egrep -i "dts-hd ma|truehd" <<< "$SELECTEDAUDIO" | head -1)
 	                if [ ! -z "$lossless" ]; then
 	                        codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 	                        if [ ! -z "`echo $codec | grep -i dts`" ]; then
@@ -229,6 +229,9 @@ splitEpisodes () {
 		while [ $i -le $totalChapters ]; do
 			first=$i
 		        last=$(echo $(($i + $CHAPTERSEPISODE - 1)) | bc)
+			if [ $last -gt $totalChapters ]; then
+				last=${totalChapters}
+			fi
 		        STARTSTOP=$(echo "$STARTSTOP $first:$last")
         
 			startTime=$(jq .chapters[$first].start_time <<< "$chapterProbe" | sed 's/\"//g')
@@ -269,7 +272,7 @@ generateFilters () {
 	esac
 
 	# ffmpeg to detect black bars for cropping.
-	rawCrop=$(ffmpeg -ss 5 -to 30 -i "$INPUTFILE" -vf cropdetect=mode=black,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+	rawCrop=$(ffmpeg -ss 200 -to 300 -i "$INPUTFILE" -vf cropdetect=mode=black,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
 
 	w=$(echo $rawCrop | awk -F ":" '{print $1}')
 	h=$(echo $rawCrop | awk -F ":" '{print $2}')
