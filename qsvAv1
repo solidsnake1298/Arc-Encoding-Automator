@@ -51,11 +51,13 @@ fi
 # Get ffprobe info to be used by other functions.
 AUDIOFFPROBE=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json)
 SUBFFPROBE=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json)
-EMPTYAUDIOJSON=""
+EMPTYAUDIOJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$AUDIOFFPROBE" | jq -e '. | length == 0')
 
 # Checks for subtitle track or untagged subtitle tracks.
 EMPTYSUBJSON=$(jq -e '.streams | length == 0' <<< "$SUBFFPROBE")
 UNTAGGEDSUBJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$SUBFFPROBE" | jq -e '. | length == 0')
+
+ISHIGH10=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams v -show_entries stream -v quiet -of json | jq '.streams[] | select(.profile == ("High 10")) | length != 0')
 
 # Uses Intel QSV to encode the original AV1.  Maps the audio tracks for the selected languages, and converts to them to OPUS.
 # Includes attachments if present.  If splitting out episodes from a MKV that came off the disc as a single file, it will loop through for each episode.
@@ -71,6 +73,13 @@ echo -e "$CHAPTERFILES" | while read file; do
 	else
 		outputFile=$(echo $inputFile | awk -F '/' '{print $NF}')
 	fi
+	decodeAccel=""
+	fpsMode=""
+	if [[ "$ISHIGH10" == "true" ]]; then
+		fpsMode="-fps_mode passthrough"
+	else
+		decodeAccel="-hwaccel qsv"
+	fi
         ffmpeg \
 		-y \
                 -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 \
@@ -80,12 +89,12 @@ echo -e "$CHAPTERFILES" | while read file; do
 		-loglevel error \
                 -init_hw_device qsv=qs@va \
                 -filter_hw_device qs \
-                -hwaccel qsv \
+                $decodeAccel \
                 -hwaccel_output_format qsv \
 		-extra_hw_frames 40 \
                 -i "$inputFile" \
                 -map_chapters 0 \
-		-map 0:v \
+		-map 0:v:0 \
                 -c:v av1_qsv \
                 -q:v 22 \
                 -look_ahead_depth 40 \
@@ -94,6 +103,7 @@ echo -e "$CHAPTERFILES" | while read file; do
 		$audioCommand \
 		$subCommand \
 		-map 0:t? \
+		$fpsMode \
 		-disposition:s 0 \
 		-low_delay_brc 1 \
 		-extbrc 1 \
@@ -107,6 +117,7 @@ echo -e "$CHAPTERFILES" | while read file; do
                 "$outputFile" < /dev/null
 done
 }
+                #-hwaccel qsv \
 
 # Selects English and Japanese audio tracks for processing.  If lossless tracks are present for a language, lossy tracks for that language are ignored.
 audioMapping () {
@@ -124,9 +135,9 @@ audioMapping () {
 			if [ ! -z "$lossless" ]; then
 				codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 				if [ ! -z "`echo $codec | grep -i dts`" ]; then
-					FINALAUDIOENG=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
+					FINALAUDIO=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
 				elif [ ! -z "`echo $codec | grep -i truehd`" ]; then
-					FINALAUDIOENG=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
+					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
 				fi
 			else
 				FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
@@ -135,9 +146,9 @@ audioMapping () {
                         if [ ! -z "$lossless" ]; then
                                 codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo $codec | grep -i dts`" ]; then
-					FINALAUDIO="${FINALAUDIO}\n$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("jpn")) | .index' <<< "$SELECTEDAUDIO")"
+					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("jpn")) | .index' <<< "$SELECTEDAUDIO")"
                                 elif [ ! -z "`echo $codec | grep -i truehd`" ]; then
-					FINALAUDIO="${FINALAUDIO}\n$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("jpn")) | .index' <<< "$SELECTEDAUDIO")"
+					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("jpn")) | .index' <<< "$SELECTEDAUDIO")"
                                 fi
                         else
 				FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.tags.language == ("jpn")) | .index' <<< "$SELECTEDAUDIO")"
@@ -177,7 +188,7 @@ audioMapping () {
 		firstTrack=$(jq -r '.streams[0] | .index' <<< "$AUDIOFFPROBE" | bc)
 		for rawIndex in $FINALAUDIO; do
 			index=$(awk "BEGIN {print $rawIndex - $firstTrack}" | bc)
-			channels=$(jq --arg l $index '.[$l|fromjson].channels' <<< "$SELECTEDAUDIO")
+			channels=$(jq --arg l $index '.streams[$l|fromjson].channels' <<< "$AUDIOFFPROBE")
 			if [ $channels -gt 2 -a $channels -lt 6 ]; then
 				AUDIOCOMMAND="$AUDIOCOMMAND -mapping_family 1 -ac ${channels} -map 0:a:${index}"
 			else
@@ -272,7 +283,7 @@ generateFilters () {
 	esac
 
 	# ffmpeg to detect black bars for cropping.
-	rawCrop=$(ffmpeg -ss 200 -to 300 -i "$INPUTFILE" -vf cropdetect=mode=black,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+	rawCrop=$(ffmpeg -ss 100 -to 150 -i "$INPUTFILE" -vf cropdetect=mode=black,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
 
 	w=$(echo $rawCrop | awk -F ":" '{print $1}')
 	h=$(echo $rawCrop | awk -F ":" '{print $2}')
@@ -318,7 +329,6 @@ generateFilters () {
 if [ $ANIME -eq 1 ]; then
 	echo "Selecting English and Japanese audio/subtitle tracks."
 	SELECTEDAUDIO=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$AUDIOFFPROBE")
-	EMPTYAUDIOJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$AUDIOFFPROBE" | jq -e '. | length == 0')
         if [ "${UNTAGGEDSUBJSON}" = 'true' ]; then
                 if [ "${EMPTYSUBJSON}" = 'true' ]; then
                         echo "No subtitle track"
