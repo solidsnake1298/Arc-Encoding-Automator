@@ -13,7 +13,7 @@
 
 # Variable initialization.  Work-in-progress initialization and cleanup.
 INPUTFILE=""
-CHAPTERSEPISODE=0
+CHAPTERSEPISODE=
 STARTCHAP=
 ENDCHAP=
 ANIME=0
@@ -73,7 +73,7 @@ echo -e "$CHAPTERFILES" | while read file; do
 	local audioCommand=$(audioMapping)
 	local subCommand=$(subMapping)
 	ext=$(echo $inputFile | awk -F '.' '{print $NF}')
-	if [ $CHAPTERSEPISODE -eq 0 && $STARTCHAP -z && $ENDCHAP -z ]; then
+	if [ -z $CHAPTERSEPISODE ] && [ -z $STARTCHAP ] && [ -z $ENDCHAP ]; then
 		outputFile=$(echo $inputFile | awk -F '/' '{print $NF}' | sed "s/.$ext/-all.mkv/g")
 	else
 		outputFile=$(echo $inputFile | awk -F '/' '{print $NF}')
@@ -129,26 +129,26 @@ audioMapping () {
 			FINALAUDIO=$(jq -r '.[] | .index' <<< "$SELECTEDAUDIO")
 		else
 			lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "$SELECTEDAUDIO" | egrep -i "dts-hd ma|truehd|flac" | head -1)
-			if [ -n "$lossless" ]; then
+			if [ ! -z "$lossless" ]; then
 				codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
-				if [ -n "`echo $codec | grep -i dts`" ]; then
+				if [ ! -z "`echo $codec | grep -i dts`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
-				elif [ -n "`echo $codec | grep -i truehd`" ]; then
+				elif [ ! -z "`echo $codec | grep -i truehd`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
-				elif [ -n "`echo $codec | grep -i flac`" ]; then
+				elif [ ! -z "`echo $codec | grep -i flac`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
 				fi
 			else
 				FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "$SELECTEDAUDIO")
 			fi
                         lossless=$(jq -r '.[] | select(.tags.language == ("jpn"))' <<< "$SELECTEDAUDIO" | egrep -i "dts-hd ma|truehd|flac" | head -1)
-                        if [ -n "$lossless" ]; then
+                        if [ ! -z "$lossless" ]; then
                                 codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
-                                if [ -n "`echo $codec | grep -i dts`" ]; then
+                                if [ ! -z "`echo $codec | grep -i dts`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("jpn")) | .index' <<< "$SELECTEDAUDIO")"
-                                elif [ -n "`echo $codec | grep -i truehd`" ]; then
+                                elif [ ! -z "`echo $codec | grep -i truehd`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("jpn")) | .index' <<< "$SELECTEDAUDIO")"
-                                elif [ -n "`echo $codec | grep -i flac`" ]; then
+                                elif [ ! -z "`echo $codec | grep -i flac`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("jpn")) | .index' <<< "$SELECTEDAUDIO")"
                                 fi
                         else
@@ -162,13 +162,13 @@ audioMapping () {
 			FINALAUDIO=$(jq -r '.[] | .index' <<< "$SELECTEDAUDIO")
 		else
                 	lossless=$(egrep -i "dts-hd ma|truehd|flac" <<< "$SELECTEDAUDIO" | head -1)
-	                if [ -n "$lossless" ]; then
+	                if [ ! -z "$lossless" ]; then
 	                        codec=$(echo $lossless | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
-	                        if [ -n "`echo $codec | grep -i dts`" ]; then
+	                        if [ ! -z "`echo $codec | grep -i dts`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) | .index' <<< "$SELECTEDAUDIO")
-	                        elif [ -n "`echo $codec | grep -i truehd`" ]; then
+	                        elif [ ! -z "`echo $codec | grep -i truehd`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd")) | .index' <<< "$SELECTEDAUDIO")
-	                        elif [ -n "`echo $codec | grep -i flac`" ]; then
+	                        elif [ ! -z "`echo $codec | grep -i flac`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("flac")) | .index' <<< "$SELECTEDAUDIO")
 	                        fi
 	                else
@@ -407,10 +407,10 @@ fi
 # If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
 # the function.  Otherwise the entire file will be processed.
 echo "Generating chapter start/stop times."
-if [ $CHAPTERSEPISODE -ne 0 ]; then
+if [ ! -z $CHAPTERSEPISODE ]; then
 	echo "Generating chapter start/stop times."
 	splitEpisodes $CHAPTERSEPISODE
-elif [ -n $STARTCHAP ] || [ -n $ENDCHAP ]; then
+elif [ ! -z $STARTCHAP ] || [ ! -z $ENDCHAP ]; then
 	echo "Using user provided start/end chapters."
 	chapterSelect $STARTCHAP $ENDCHAP
 else
