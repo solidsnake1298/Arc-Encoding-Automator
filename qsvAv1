@@ -14,8 +14,7 @@
 # Variable initialization.  Work-in-progress initialization and cleanup.
 INPUTFILE=""
 CHAPTERSEPISODE=
-STARTCHAP=
-ENDCHAP=
+CHAPSELECT=
 ANIME=0
 RESCALE=0
 FILTERS=""
@@ -24,16 +23,17 @@ FINALAUDIO=""
 SELECTEDAUDIO=""
 SELECTEDSUBS=""
 SUBCOMMAND=""
+NOHWADECODE=0
 
 # Reads input paramamters
-while getopts i:c:d:a:r:f:s:e:o: option; do
+while getopts i:c:d:a:r:f:s:e:o:h: option; do
         case $option in
                 i) INPUTFILE=${OPTARG};;
                 c) CHAPTERSEPISODE=${OPTARG};;
                 a) ANIME=${OPTARG};;
                 r) RESCALE=${OPTARG};;
-		s) STARTCHAP=${OPTARG};;
-		e) ENDCHAP=${OPTARG};;
+		s) CHAPSELECT=${OPTARG};;
+		h) NOHWADECODE=${OPTARG};;
                \?) echo "Invalid option"
                    exit;;
         esac
@@ -45,20 +45,39 @@ if [ -z "$INPUTFILE" ]; then
         exit 1
 fi
 
+# Remuxes input file so that video tracks are grouped first, audio second, subs, third.  Simplifies track selection logic
+# and resolves issues where weirdly ordered input files cause improper track selection.
+ext=$(echo $INPUTFILE | awk -F '.' '{print $NF}')
+remuxOutputFile=""
+newExt=""
+
+if [[ "$ext" == "avi" ]] || [["$ext" == "mpg" ]]; then
+        remuxOutputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mp4/g")
+        ffmpeg -fflags +genpts+igndts -y -i "$INPUTFILE" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "$remuxOutputFile"
+        newExt="mp4"
+else
+        remuxOutputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mkv/g")
+        ffmpeg -fflags +genpts+igndts -y -i "$INPUTFILE" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "$remuxOutputFile"
+        newExt="mkv"
+fi
+
 # Get ffprobe info to be used by other functions.
-AUDIOFFPROBE=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams a -show_entries stream -v quiet -of json)
-SUBFFPROBE=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json)
+AUDIOFFPROBE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams a -show_entries stream -v quiet -of json)
+SUBFFPROBE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams s -show_entries stream -v quiet -of json)
 EMPTYAUDIOJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$AUDIOFFPROBE" | jq -e '. | length == 0')
 
 # Checks for subtitle track or untagged subtitle tracks.
 EMPTYSUBJSON=$(jq -e '.streams | length == 0' <<< "$SUBFFPROBE")
 UNTAGGEDSUBJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$SUBFFPROBE" | jq -e '. | length == 0')
 
-ISHIGH10=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams v -show_entries stream -v quiet -of json | jq '.streams[] | select(.profile == ("High 10")) | length != 0')
+SWDECODE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams v -show_entries stream -v quiet -of json | jq '.streams[] | select(.profile == ("High 10") or .profile == ("Advanced Simple Profile") or .codec_name == ("mpeg1video")) | length != 0')
 
-if [[ "$ISHIGH10" == "true" ]]; then
+if [[ "$SWDECODE" == "true" ]]; then
 	decodeAccel=""
 	hwDL=""
+elif [[ "$NOHWADECODE" == "1" ]]; then
+        decodeAccel=""
+        hwDL=""
 else    
 	decodeAccel="-hwaccel qsv"
 	hwDL="hwdownload,"
@@ -72,9 +91,8 @@ echo -e "$CHAPTERFILES" | while read file; do
 	inputFile="$file"
 	local audioCommand=$(audioMapping)
 	local subCommand=$(subMapping)
-	ext=$(echo $inputFile | awk -F '.' '{print $NF}')
 	if [ -z $CHAPTERSEPISODE ] && [ -z $STARTCHAP ] && [ -z $ENDCHAP ]; then
-		outputFile=$(echo $inputFile | awk -F '/' '{print $NF}' | sed "s/.$ext/-all.mkv/g")
+		outputFile=$(echo $inputFile | awk -F '/' '{print $NF}' | sed "s/-remux.${newExt}/-all.mkv/g")
 	else
 		outputFile=$(echo $inputFile | awk -F '/' '{print $NF}')
 	fi
@@ -98,8 +116,8 @@ echo -e "$CHAPTERFILES" | while read file; do
                 -look_ahead_depth 40 \
                 -preset veryslow \
                 -vf vpp_qsv="$FILTERS" \
-		$audioCommand \
-		$subCommand \
+		${audioCommand} \
+		${subCommand} \
 		-map 0:t? \
 		-fps_mode passthrough \
 		-disposition:s 0 \
@@ -238,7 +256,7 @@ splitEpisodes () {
 	chapters=$1
 	
 	# Probes videos for chapter information and prints to text file
-	chapterProbe=$(ffprobe -loglevel error -i "$INPUTFILE" -print_format json -show_chapters -loglevel error)
+	chapterProbe=$(ffprobe -loglevel error -i "$remuxOutputFile" -print_format json -show_chapters -loglevel error)
 
         # Parses json file for the start time of each chapter.  Also counts number of chapters
         rawChapters=$(echo $chapterProbe | jq .chapters[].start_time | wc -l)
@@ -259,12 +277,12 @@ splitEpisodes () {
        
 		startTime=$(jq .chapters[$first].start_time <<< "$chapterProbe" | sed 's/\"//g')
 	        endTime=$(jq .chapters[$last].end_time <<< "$chapterProbe" | sed 's/\"//g')
-		ext=$(echo $INPUTFILE | awk -F '.' '{print $NF}')
-		outputFile=$(echo $INPUTFILE | sed "s/.$ext//g")
+		ext=$(echo $remuxOutputFile | awk -F '.' '{print $NF}')
+		outputFile=$(echo $remuxOutputFile | sed "s/.$ext//g")
        	        chapterSelect="-ss $startTime -to $endTime"
 		segmentFile=$(echo "WIP/${first}-${last}-${outputFile}.mkv")
 
-		ffmpeg -y -fflags +genpts+igndts -i "$INPUTFILE" -map 0 -codec copy $chapterSelect -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "$segmentFile" < /dev/null
+		ffmpeg -y -fflags +genpts+igndts -i "$remuxOutputFile" -map 0 -codec copy $chapterSelect -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "$segmentFile" < /dev/null
 		CHAPTERFILES="${CHAPTERFILES}\n${segmentFile}"
 
 	        i=$(echo $(($i + $CHAPTERSEPISODE)) | bc)
@@ -277,7 +295,7 @@ chapterSelect () {
 	endChapter=$2
 
         # Probes videos for chapter information and prints to text file
-        chapterProbe=$(ffprobe -loglevel error -i "$INPUTFILE" -print_format json -show_chapters -loglevel error)
+        chapterProbe=$(ffprobe -loglevel error -i "$remuxOutputFile" -print_format json -show_chapters -loglevel error)
 
         # Parses json file for the start time of each chapter.  Also counts number of chapters
         #rawChapters=$(echo $chapterProbe | jq .chapters[].start_time | wc -l)
@@ -295,22 +313,23 @@ chapterSelect () {
                 
         startTime=$(jq .chapters[$startChapter].start_time <<< "$chapterProbe" | sed 's/\"//g')
         endTime=$(jq .chapters[$endChapter].end_time <<< "$chapterProbe" | sed 's/\"//g')
-        ext=$(echo $INPUTFILE | awk -F '.' '{print $NF}')
-        outputFile=$(echo $INPUTFILE | sed "s/.$ext//g")
+        ext=$(echo $remuxOutputFile | awk -F '.' '{print $NF}')
+        outputFile=$(echo $remuxOutputFile | sed "s/.$ext//g")
         chapterSelect="-ss $startTime -to $endTime"
         segmentFile=$(echo "WIP/${startChapter}-${endChapter}-${outputFile}.mkv")
                 
-        ffmpeg -y -fflags +genpts+igndts -i "$INPUTFILE" -map 0 -codec copy $chapterSelect -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "$segmentFile" < /dev/null
+        ffmpeg -y -fflags +genpts+igndts -i "$remuxOutputFile" -map 0 -codec copy $chapterSelect -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "$segmentFile" < /dev/null
         CHAPTERFILES="${CHAPTERFILES}\n${segmentFile}"
 }
 
 # Generates video filters for vpp_qsv
 generateFilters () {
 	# ffprobe to determine if interlaced.  If yes, set yadif deinterlace filter.
-	rawParams=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams v:0 -show_entries stream=width,height,field_order,pix_fmt,sample_aspect_ratio,duration)
+	rawParams=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams v:0 -show_entries stream=width,height,field_order,pix_fmt,sample_aspect_ratio,duration,display_aspect_ratio)
 	interlaced=$(echo $rawParams | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}')
 	inputBitDepth=$(echo $rawParams | grep -o 'pix_fmt=[a-z,0-9]\+' | awk -F '=' '{print $2}')
 	sar=$(echo $rawParams | grep -o 'sample_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}')
+	dar=$(echo $rawParams | grep -o 'display_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}')
 	width=$(echo $rawParams | grep -o 'width=[0-9]\+' | awk -F '=' '{print $2}')
 	height=$(echo $rawParams | grep -o 'height=[0-9]\+' | awk -F '=' '{print $2}')
 	duration=$(echo $rawParams | grep -o 'duration=[0-9]\+' | awk -F '=' '{print $2}')
@@ -326,21 +345,36 @@ generateFilters () {
 	esac
 
 	# ffmpeg to detect black bars for cropping.
-	#ss1_float=$(awk "BEGIN {print $duration * .2}" | bc)
-	#ss1=$(printf "%.0f" $ss1_float)
-	#ss2_float=$(awk "BEGIN {print $duration * .5}" | bc)
-	#ss2=$(printf "%.0f" $ss2_float)
-	#ss3_float=$(awk "BEGIN {print $duration * .7}" | bc)
-	#ss3=$(printf "%.0f" $ss3_float)
-	#rawCrop1=$(ffmpeg -ss $ss1 -t 10 -i "$INPUTFILE" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
-	#rawCrop2=$(ffmpeg -ss $ss2 -t 10 -i "$INPUTFILE" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
-	#rawCrop3=$(ffmpeg -ss $ss3 -t 10 -i "$INPUTFILE" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
-	rawCrop=$(ffmpeg -ss 300 -t 30 -i "$INPUTFILE" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+	rawCrop1=$(ffmpeg -ss 0 -t 10 -i "$remuxOutputFile" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+	rawCrop2=$(ffmpeg -ss 300 -t 10 -i "$remuxOutputFile" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+	rawCrop3=$(ffmpeg -ss 1800 -t 10 -i "$remuxOutputFile" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
 
-	w=$(echo $rawCrop | awk -F ":" '{print $1}')
-	h=$(echo $rawCrop | awk -F ":" '{print $2}')
-	x=$(echo $rawCrop | awk -F ":" '{print $3}')
-	y=$(echo $rawCrop | awk -F ":" '{print $4}')
+	IFS=$'\n'
+	w1=$(echo $rawCrop1 | awk -F ":" '{print $1}')
+	w2=$(echo $rawCrop2 | awk -F ":" '{print $1}')
+	w3=$(echo $rawCrop3 | awk -F ":" '{print $1}')
+	wSort=(${w1} ${w2} ${w3})
+	w=$(echo "${wSort[*]}" | sort -nr | head -n1)
+
+	h1=$(echo $rawCrop1 | awk -F ":" '{print $2}')
+	h2=$(echo $rawCrop2 | awk -F ":" '{print $2}')
+	h3=$(echo $rawCrop3 | awk -F ":" '{print $2}')
+        hSort=(${h1} ${h2} ${h3})
+        h=$(echo "${hSort[*]}" | sort -nr | head -n1)
+
+	x1=$(echo $rawCrop1 | awk -F ":" '{print $3}')
+	x2=$(echo $rawCrop2 | awk -F ":" '{print $3}')
+	x3=$(echo $rawCrop3 | awk -F ":" '{print $3}')
+        xSort=(${x1} ${x2} ${x3})
+        x=$(echo "${xSort[*]}" | sort -n | head -n1)
+
+	y1=$(echo $rawCrop1 | awk -F ":" '{print $4}')
+	y2=$(echo $rawCrop2 | awk -F ":" '{print $4}')
+	y3=$(echo $rawCrop3 | awk -F ":" '{print $4}')
+        ySort=(${y1} ${y2} ${y3})
+        y=$(echo "${ySort[*]}" | sort -n | head -n1)
+
+	IFS=$' \t\n'
 
 	inputFormat=""
 
@@ -357,7 +391,7 @@ generateFilters () {
 		h_scale=$(printf "%.0f" $h_float)
 		FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w:h=$h_scale:format=p010le"
 	elif [ $RESCALE -eq 2 ]; then
-		w_float=$(awk "BEGIN {print $w / 1.125}" | bc)
+		w_float=$(awk "BEGIN {print $h * 1.333}" | bc)
 		w_scale=$(printf "%.0f" $w_float)
 		FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w_scale:h=$h:format=p010le"
 	else
@@ -365,17 +399,47 @@ generateFilters () {
 			sarRatio1=$(echo $sar | awk -F ':' '{print $1}')
 			sarRatio2=$(echo $sar | awk -F ':' '{print $2}')
 			sarRatio=$(awk "BEGIN {print $sarRatio1 / $sarRatio2}")
-			darRatio=$(awk "BEGIN {print $width / $height}")
+			darRatio1=$(echo $dar | awk -F ':' '{print $1}')
+			darRatio2=$(echo $dar | awk -F ':' '{print $2}')
+			darRatio=$(awk "BEGIN {print $darRatio1 / $darRatio2}")
 	                ratio=$(awk "BEGIN {print $darRatio * $sarRatio}")
-	                h_float=$(awk "BEGIN {print $w / $ratio}" | bc)
-	                h_scale=$(printf "%.0f" $h_float)
-			FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w:h=$h_scale:format=p010le"
+			ratioDiff=$(awk "BEGIN {print $ratio - 1.333}")
+			ratioDiff=${ratioDiff#-}
+			if [[ $(awk "BEGIN{print ($ratioDiff < 0.2)}") -eq 1 ]]; then
+                		w_float=$(awk "BEGIN {print $h * 1.333}" | bc)
+				w_scale=$(printf "%.0f" $w_float)
+				FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w_scale:h=$h:format=p010le"
+			else
+				h_float=$(awk "BEGIN {print $w / $ratio}" | bc)
+				h_scale=$(printf "%.0f" $h_float)
+				FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=$w:h=$h_scale:format=p010le"
+			fi
 		else
 			FILTERS="${deinterlaced}:cw=$w:ch=$h:cx=$x:cy=$y:async_depth=4:format=p010le"
 	        fi
 	fi
 
 }
+
+# If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
+# the function.  Otherwise the entire file will be processed.
+# If -s is used, it will loop through the segments provided to extract the episodes based on chapter numbers provided.
+# The segments start and end are colon sepearate, episodes are comma separated.
+echo "Generating chapter start/stop times."
+if [ ! -z $CHAPTERSEPISODE ]; then
+        echo "Generating chapter start/stop times."
+        splitEpisodes $CHAPTERSEPISODE
+elif [ ! -z $CHAPSELECT ]; then
+        echo "Using user provided start/end chapters."
+	segments=$(echo $CHAPSELECT | sed 's/,/ /g')
+	for segment in ${segments} ; do
+		STARTCHAP=$(echo $segment | awk -F ':' '{print $1}')
+		ENDCHAP=$(echo $segment | awk -F ':' '{print $2}')
+		chapterSelect $STARTCHAP $ENDCHAP
+	done
+else
+        CHAPTERFILES=$(echo "$remuxOutputFile")
+fi
 
 # Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
 if [ $ANIME -eq 1 ]; then
@@ -404,19 +468,6 @@ else
 	fi
 fi
 
-# If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
-# the function.  Otherwise the entire file will be processed.
-echo "Generating chapter start/stop times."
-if [ ! -z $CHAPTERSEPISODE ]; then
-	echo "Generating chapter start/stop times."
-	splitEpisodes $CHAPTERSEPISODE
-elif [ ! -z $STARTCHAP ] || [ ! -z $ENDCHAP ]; then
-	echo "Using user provided start/end chapters."
-	chapterSelect $STARTCHAP $ENDCHAP
-else
-	CHAPTERFILES=$(echo "$INPUTFILE")
-fi
-
 # Analyzes video, generates crop, deinterlace, video quality, rescaling parameters for insertion in vpp_qsv filter.
 echo "Generating video filter parameters."
 generateFilters
@@ -424,7 +475,9 @@ generateFilters
 # If the -f 1 option is used, all audio tracks will be converted to OPUS.
 # If a lossless Dolby/DTS codec exists for English and/or Japanese, the lossy tracks
 # will be discarded in favor of converting only the lossless track.
+echo $CHAPTERFILES
 av1Encode
 
 # WIP cleanup
+rm -f "$remuxOutputFile"
 rm -rf WIP/
