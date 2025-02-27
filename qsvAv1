@@ -45,44 +45,6 @@ if [ -z "$INPUTFILE" ]; then
         exit 1
 fi
 
-# Remuxes input file so that video tracks are grouped first, audio second, subs, third.  Simplifies track selection logic
-# and resolves issues where weirdly ordered input files cause improper track selection.
-ext=$(echo $INPUTFILE | awk -F '.' '{print $NF}')
-remuxOutputFile=""
-newExt=""
-
-if [[ "$ext" == "avi" ]] || [["$ext" == "mpg" ]]; then
-        remuxOutputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mp4/g")
-        ffmpeg -fflags +genpts+igndts -y -i "$INPUTFILE" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "$remuxOutputFile"
-        newExt="mp4"
-else
-        remuxOutputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mkv/g")
-        ffmpeg -fflags +genpts+igndts -y -i "$INPUTFILE" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "$remuxOutputFile"
-        newExt="mkv"
-fi
-
-# Get ffprobe info to be used by other functions.
-AUDIOFFPROBE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams a -show_entries stream -v quiet -of json)
-SUBFFPROBE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams s -show_entries stream -v quiet -of json)
-EMPTYAUDIOJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$AUDIOFFPROBE" | jq -e '. | length == 0')
-
-# Checks for subtitle track or untagged subtitle tracks.
-EMPTYSUBJSON=$(jq -e '.streams | length == 0' <<< "$SUBFFPROBE")
-UNTAGGEDSUBJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$SUBFFPROBE" | jq -e '. | length == 0')
-
-SWDECODE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams v -show_entries stream -v quiet -of json | jq '.streams[] | select(.profile == ("High 10") or .profile == ("Advanced Simple Profile") or .codec_name == ("mpeg1video") or .codec_name == ("vp8") or .codec_name == ("vc1")) | length != 0')
-
-if [[ "$SWDECODE" == "true" ]]; then
-	decodeAccel=""
-	hwDL=""
-elif [[ "$NOHWADECODE" == "1" ]]; then
-        decodeAccel=""
-        hwDL=""
-else    
-	decodeAccel="-hwaccel qsv"
-	hwDL="hwdownload,"
-fi
-
 # Uses Intel QSV to encode the original AV1.  Maps the audio tracks for the selected languages, and converts to them to OPUS.
 # Includes attachments if present.  If splitting out episodes from a MKV that came off the disc as a single file, it will loop through for each episode.
 # If using jellyfin-ffmpeg7.0.2-4 and newer, DV 7.6 and 8 will automatically be stripped.
@@ -203,13 +165,12 @@ audioMapping () {
 	audioCommand=$(for rawIndex in $FINALAUDIO; do
 		contains $rawIndex $skipConversion
 		compatCodec=$(echo $? | bc)
+		index=$(awk "BEGIN {print $rawIndex - $firstTrack}" | bc)
 		if [ $compatCodec -eq 0 ]; then
-			index=$(awk "BEGIN {print $rawIndex - $firstTrack}" | bc)
 	                audioLoop="-map 0:a:${index} -c:a:${trackNumber} copy"
 			((++trackNumber))
 			echo $audioLoop
 		else
-			index=$(awk "BEGIN {print $rawIndex - $firstTrack}" | bc)
 			audioLoop="-map 0:a:${index} -c:a:${trackNumber} libopus -vbr on -compression_level 10 -application audio"
 			channels=$(jq --arg l $index '.streams[$l|fromjson].channels' <<< "$AUDIOFFPROBE")
 			if [ $channels -gt 2 -a $channels -lt 6 ]; then
@@ -219,7 +180,6 @@ audioMapping () {
 			echo $audioLoop
 		fi
 	done)
-	#echo $audioLoop)
 	echo "$audioCommand"
 }
 
@@ -236,10 +196,26 @@ contains() {
 # Selects and maps English and Japanese subtitle tracks.
 subMapping () {
 	firstTrack=$(jq -r '.streams[0] | .index' <<< "$SUBFFPROBE" | bc)
+	noMovText=$(jq '[.streams[] | select(.codec_name == ("mov_text"))]' <<< $SUBFFPROBE | jq -e '. | length == 0')
 	# Checks for no subtitle track.  Common for older fansubs with burned in subtitles.
 	if [ "${EMPTYSUBJSON}" = 'true' ]; then
 		#echo "No subtitle track"
 		SUBCOMMAND="-sn"
+	elif [ "${noMovText}" = 'false' ]; then
+		trackNumber=0
+		SUBCOMMAND=$(while read rawIndex; do
+			index=$(awk "BEGIN {print $rawIndex - $firstTrack}" | bc)
+			noMovText=$(jq --arg l $index '.streams[$l|fromjson] | select(.codec_name == ("mov_text"))' <<< $SUBFFPROBE | jq -e '. | length == 0')
+			if [ "${noMovText}" = 'false' ]; then
+				subLoop="-map 0:s:${index} -c:s:${trackNumber} srt"
+				((++trackNumber))
+				echo $subLoop
+			else
+				subLoop="-map 0:s:${index} -c:s:${trackNumber} copy"
+				((++trackNumber))
+				echo $subLoop
+			fi
+		done <<< "$(jq '.[].index' <<< "$SELECTEDSUBS")")
 	else
 	# If audio language tags are not present, it is safe to assume subtitle language tags aren't either
 		SUBCOMMAND="-c:s copy"
@@ -421,6 +397,47 @@ generateFilters () {
 
 }
 
+# Remuxes input file so that video tracks are grouped first, audio second, subs, third.  Simplifies track selection logic
+# and resolves issues where weirdly ordered input files cause improper track selection.
+ext=$(echo $INPUTFILE | awk -F '.' '{print $NF}')
+remuxOutputFile=""
+newExt=""
+
+SUBFFPROBE=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams s -show_entries stream -v quiet -of json)
+NOMOVTEXT=$(jq '[.streams[] | select(.codec_name == ("mov_text"))]' <<< $SUBFFPROBE | jq -e '. | length == 0')
+
+if [[ "$ext" == "avi" ]] || [["$ext" == "mpg" ]] || [ "${NOMOVTEXT}" = 'false' ]; then
+        remuxOutputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mp4/g")
+        ffmpeg -fflags +genpts+igndts -y -i "$INPUTFILE" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "$remuxOutputFile"
+        newExt="mp4" 
+else
+        remuxOutputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mkv/g")
+        ffmpeg -fflags +genpts+igndts -y -i "$INPUTFILE" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "$remuxOutputFile"
+        newExt="mkv"
+fi
+
+# Get ffprobe info to be used by other functions.
+AUDIOFFPROBE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams a -show_entries stream -v quiet -of json)
+SUBFFPROBE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams s -show_entries stream -v quiet -of json)
+EMPTYAUDIOJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$AUDIOFFPROBE" | jq -e '. | length == 0')
+
+# Checks for subtitle track or untagged subtitle tracks.
+EMPTYSUBJSON=$(jq -e '.streams | length == 0' <<< "$SUBFFPROBE")
+UNTAGGEDSUBJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$SUBFFPROBE" | jq -e '. | length == 0')
+
+SWDECODE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams v -show_entries stream -v quiet -of json | jq '.streams[] | select(.profile == ("High 10") or .profile == ("Advanced Simple Profile") or .codec_name == ("mpeg1video") or .codec_name == ("vp8") or .codec_name == ("vc1")) | length != 0')
+
+if [[ "$SWDECODE" == "true" ]]; then
+        decodeAccel=""
+        hwDL=""
+elif [[ "$NOHWADECODE" == "1" ]]; then
+        decodeAccel=""
+        hwDL=""
+else
+        decodeAccel="-hwaccel qsv"
+        hwDL="hwdownload,"
+fi
+
 # If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
 # the function.  Otherwise the entire file will be processed.
 # If -s is used, it will loop through the segments provided to extract the episodes based on chapter numbers provided.
@@ -475,7 +492,6 @@ generateFilters
 # If the -f 1 option is used, all audio tracks will be converted to OPUS.
 # If a lossless Dolby/DTS codec exists for English and/or Japanese, the lossy tracks
 # will be discarded in favor of converting only the lossless track.
-echo $CHAPTERFILES
 av1Encode
 
 # WIP cleanup
