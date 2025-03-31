@@ -447,7 +447,7 @@ EMPTYAUDIOJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.lan
 EMPTYSUBJSON=$(jq -e '.streams | length == 0' <<< "$SUBFFPROBE")
 UNTAGGEDSUBJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "$SUBFFPROBE" | jq -e '. | length == 0')
 
-SWDECODE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.profile == ("High 10") or .profile == ("Advanced Simple Profile") or .codec_name == ("mpeg1video") or .codec_name == ("vp8") or .codec_name == ("vc1") or .codec_name == ("msmpeg4v3") or .codec_name == ("mpeg4") or .profile == ("High 4:2:2"))] | length != 0')
+SWDECODE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.profile == ("High 10") or .profile == ("Advanced Simple Profile") or .codec_name == ("mpeg1video") or .codec_name == ("vp8") or .codec_name == ("vc1") or .codec_name == ("msmpeg4v3") or .codec_name == ("mpeg4") or .profile == ("High 4:2:2") or .profile == ("High 4:4:4 Predictive"))] | length != 0')
 
 if [[ "$SWDECODE" == "true" ]]; then
         decodeAccel=""
