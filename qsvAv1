@@ -82,7 +82,6 @@ echo -e "$CHAPTERFILES" | while read file; do
                 -vf vpp_qsv="$FILTERS" \
 		${audioCommand} \
 		${subCommand} \
-		-map 0:t? \
 		-fps_mode passthrough \
 		-disposition:s 0 \
 		-low_delay_brc 1 \

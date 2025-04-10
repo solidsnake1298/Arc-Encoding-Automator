@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Debug output
-#set -ex
-
 ###########################
 # Assumes jellyfin-ffmpeg is installed and symlinked in /usr/bin.
 # Most functions may work with vanilla ffmpeg, but may require additional Intel drivers.
@@ -243,8 +240,6 @@ subMapping () {
 	
 	index=0
 	fonts=""
-	# Temp for debugging
-	#cat /dev/null > fonts.txt
 	firstAttachmentTrack=$(jq -r '.streams[0] | .index' <<< "$ATTACHMENTFFPROBE" | bc)
         # Checks for attachments.  Only expected when using ASS subtitles.
         if [ "${EMPTYATTACHMENTJSON}" = 'true' ]; then
@@ -259,19 +254,18 @@ subMapping () {
 				fonts+="$newFonts"
 			fi
 		done <<< "$(jq '.[].index' <<< "$SELECTEDSUBS")"
-		# Temp for debugging
-		#echo $fonts >> fonts.txt
-		#uniqueFonts=$(echo -e "${fonts,,}" | sed 's/|/\n/g' | sort | uniq)
-		uniqueFonts=$(echo -e "${fonts,,}" | sort | uniq)
-		ATTACHMENTCOMMAND=$(while read attachmentIndex ; do
-			index=$(awk "BEGIN {print $attachmentIndex - $firstAttachmentTrack}" | bc)
-			echo -e "$uniqueFonts" | while read font ; do
-				fontPresent=$(jq --arg l $index --arg m "$font" '.streams[$l|fromjson].tags.filename | ascii_downcase | contains($m)' <<< $ATTACHMENTFFPROBE)
-				if [ "$fontPresent" = 'true' ]; then
-					echo "-map 0:t:$index"
-				fi
-			done
-		done <<< "$(jq '.streams[].index' <<< "$ATTACHMENTFFPROBE")")
+                uniqueFonts=$(echo -e "${fonts}" | sort | uniq)
+                ATTACHMENTCOMMAND=$(while read attachmentIndex ; do
+                        index=$(awk "BEGIN {print $attachmentIndex - $firstAttachmentTrack}" | bc)
+                        fontFileName=$(jq --arg l $index '.streams[$l|fromjson].tags.filename' <<< $ATTACHMENTFFPROBE)
+                        ffmpeg -dump_attachment:t:$index "$fontFileName" -i "$INPUTFILE"
+                        fontFullName=$(fc-scan "$fontFileName" | egrep "family:|fullname:|postscriptname:" | awk -F ': ' '{print $2}')
+                        fontPresent=$(egrep "${uniqueFonts//$'\n'/|}" <<< "${fontFullName}")
+                        rm -f "$fontFileName"
+                        if [[ "$fontPresent" ]]; then
+                                echo "-map 0:t:$index"
+                        fi
+                done <<< "$(jq '.streams[].index' <<< "$ATTACHMENTFFPROBE")")
 	fi
         echo "$SUBCOMMAND $ATTACHMENTCOMMAND"
 
