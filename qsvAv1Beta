@@ -528,7 +528,7 @@ if [ $ANIME -eq 1 ]; then
 			SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "$SUBFFPROBE")
                 fi
         else
-		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx"))]' <<< "$SUBFFPROBE")
+		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx") or .tags.language == ("jpn"))]' <<< "$SUBFFPROBE")
         fi
 elif [ $KOREAN -eq 1 ]; then
         echo "Selecting English and Japanese audio/subtitle tracks."
