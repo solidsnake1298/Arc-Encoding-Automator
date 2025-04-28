@@ -23,9 +23,10 @@ SELECTEDSUBS=""
 SUBCOMMAND=""
 ATTACHMENTCOMMAND=""
 NOHWADECODE=0
+SCRATCHDIR=""
 
 # Reads input paramamters
-while getopts i:c:d:a:k:r:f:s:e:o:h: option; do
+while getopts i:c:a:k:r:s:h:w: option; do
         case $option in
                 i) INPUTFILE=${OPTARG};;
                 c) CHAPTERSEPISODE=${OPTARG};;
@@ -34,6 +35,7 @@ while getopts i:c:d:a:k:r:f:s:e:o:h: option; do
                 r) RESCALE=${OPTARG};;
 		s) CHAPSELECT=${OPTARG};;
 		h) NOHWADECODE=${OPTARG};;
+		w) SCRATCHDIR=${OPTARG};;
                \?) echo "Invalid option"
                    exit;;
         esac
@@ -44,6 +46,12 @@ if [ -z "$INPUTFILE" ]; then
         echo "No input file was provided."
         exit 1
 fi
+# If no SCRATCHDIR provided, use current dir if none provided
+if [ -z "$SCRATCHDIR" ]; then
+	SCRATCHDIR="."
+fi
+
+WIP=${SCRATCHDIR}/WIP
 
 # Uses Intel QSV to encode the original AV1.  Maps the audio tracks for the selected languages, and converts to them to OPUS.
 # Includes attachments if present.  If splitting out episodes from a MKV that came off the disc as a single file, it will loop through for each episode.
@@ -283,7 +291,7 @@ splitEpisodes () {
         # ffmpeg chapters start at zero.  Subtracting 1 to align with last chapter.
         totalChapters=$(echo $(($rawChapters - 1)) | bc)
 
-	mkdir WIP
+	mkdir ${WIP}
 	i=0
 	STARTSTOP=""
 	# Builds a colon separated list of chapter start:end
@@ -300,7 +308,7 @@ splitEpisodes () {
 		ext=$(echo $remuxOutputFile | awk -F '.' '{print $NF}')
 		outputFile=$(echo $remuxOutputFile | sed "s/.$ext//g")
        	        chapterSelect="-ss $startTime -to $endTime"
-		segmentFile=$(echo "WIP/${first}-${last}-${outputFile}.mkv")
+		segmentFile=$(echo "${WIP}/${first}-${last}-${outputFile}.mkv")
 
 		ffmpeg -y -fflags +genpts+igndts -i "$remuxOutputFile" -map 0 -codec copy $chapterSelect -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "$segmentFile" < /dev/null
 		CHAPTERFILES="${CHAPTERFILES}\n${segmentFile}"
@@ -323,7 +331,7 @@ chapterSelect () {
         # ffmpeg chapters start at zero.  Subtracting 1 to align with last chapter.
         #totalChapters=$(echo $(($rawChapters - 1)) | bc)
 
-        mkdir WIP
+        mkdir ${WIP}
         STARTSTOP=""
         # Builds a colon separated list of chapter start:end
         if [ $endChapter -gt $totalChapters ]; then
@@ -336,7 +344,7 @@ chapterSelect () {
         ext=$(echo $remuxOutputFile | awk -F '.' '{print $NF}')
         outputFile=$(echo $remuxOutputFile | sed "s/.$ext//g")
         chapterSelect="-ss $startTime -to $endTime"
-        segmentFile=$(echo "WIP/${startChapter}-${endChapter}-${outputFile}.mkv")
+        segmentFile=$(echo "${WIP}/${startChapter}-${endChapter}-${outputFile}.mkv")
                 
         ffmpeg -y -fflags +genpts+igndts -i "$remuxOutputFile" -map 0 -codec copy $chapterSelect -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "$segmentFile" < /dev/null
         CHAPTERFILES="${CHAPTERFILES}\n${segmentFile}"
@@ -453,23 +461,28 @@ NOMSMPEG=$(ffprobe -loglevel error -i "$INPUTFILE" -select_streams v -show_entri
 
 if [[ "$ext" == "avi" ]] || [[ "$ext" == "mpg" ]] || [[ "$ext" == "mp4" ]] || [[ "$ext" == "m2ts" ]]; then
 	if [ "${NOMOVTEXT}" = 'false' ] && [ "${NOMSMPEG}" = 'true' ]; then
-	       remuxOutputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mp4/g")
-	       ffmpeg -fflags +genpts+igndts -y -i "$INPUTFILE" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "$remuxOutputFile"
-	       newExt="mp4"
+	        remuxOutputFile=$(echo ${INPUTFILE} | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mp4/g")
+		remuxOutputFile=$(echo ${SCRATCHDIR}/${remuxOutputFile})
+	        ffmpeg -fflags +genpts+igndts -y -i "$INPUTFILE" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${SCRATCHDIR}/${remuxOutputFile}"
+	        newExt="mp4"
         elif [[ "$ext" == "m2ts" ]]; then
-		remuxOutputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.$ext/g")
+		remuxOutputFile=$(echo ${INPUTFILE} | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.$ext/g")
+		remuxOutputFile=$(echo ${SCRATCHDIR}/${remuxOutputFile})
 		ffmpeg -fflags +genpts+igndts -y -i "$INPUTFILE" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "$remuxOutputFile"
 		newExt="m2ts"
 	else
-        	remuxOutputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mkv/g")
+        	remuxOutputFile=$(echo ${INPUTFILE} | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mkv/g")
+		remuxOutputFile=$(echo ${SCRATCHDIR}/${remuxOutputFile})
 	        ffmpeg -fflags +genpts+igndts -y -i "$INPUTFILE" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "$remuxOutputFile"
 	        newExt="mkv"
 	fi
 else
-	remuxOutputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mkv/g")
+	remuxOutputFile=$(echo ${INPUTFILE} | awk -F '/' '{print $NF}' | sed "s/.$ext/-remux.mkv/g")
+	remuxOutputFile=$(echo ${SCRATCHDIR}/${remuxOutputFile})
 	ffmpeg -fflags +genpts+igndts -y -i "$INPUTFILE" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "$remuxOutputFile"
 	newExt="mkv"
 fi
+
 
 # Get ffprobe info to be used by other functions.
 AUDIOFFPROBE=$(ffprobe -loglevel error -i "$remuxOutputFile" -select_streams a -show_entries stream -v quiet -of json)
@@ -567,4 +580,4 @@ av1Encode
 
 # WIP cleanup
 rm -f "$remuxOutputFile"
-rm -rf WIP/
+rm -rf ${WIP}
