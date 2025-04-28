@@ -3,7 +3,7 @@ Automates media encoding to AV1, including handling language selection, converti
 
 # Requirements
 - Linux kernel 6.2+.
-- ffmpeg, but tested with Jellyfin-ffmpeg 6.0.1, 7.0.2, 7.1.1 symlinked to /usr/bin.
+- ffmpeg, but tested with Jellyfin-ffmpeg 6.0.1, 7.0.2, and 7.1.1 symlinked to /usr/bin.
 - Intel GPU with AV1 encoding support.
 - Dolby Vision removal functionality requires Jellyfin-ffmpeg 7.0.2-4 and newer.
 - jq - Available in most package repos.
