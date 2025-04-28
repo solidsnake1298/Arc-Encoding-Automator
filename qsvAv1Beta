@@ -185,7 +185,7 @@ audioMapping () {
 	audioCommand=$(for rawIndex in ${FINALAUDIO}; do
 		contains ${rawIndex} ${skipConversion}
 		compatCodec=$(echo $? | bc)
-		index=$(awk "BEGIN {print $rawIndex - ${firstTrack}}" | bc)
+		index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
 		if [ ${compatCodec} -eq 0 ]; then
 	                audioLoop="-map 0:a:${index} -c:a:${trackNumber} copy"
 			((++trackNumber))
@@ -224,7 +224,7 @@ subMapping () {
 	elif [ "${noMovText}" = 'false' ]; then
 		trackNumber=0
 		SUBCOMMAND=$(while read rawIndex; do
-			index=$(awk "BEGIN {print $rawIndex - ${firstTrack}}" | bc)
+			index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
 			subIndexArray="${subIndexArray} ${index}"
 			noMovText=$(jq --arg l ${index} '.streams[$l|fromjson] | select(.codec_name == ("mov_text"))' <<< ${SUBFFPROBE} | jq -e '. | length == 0')
 			if [ "${noMovText}" = 'false' ]; then
@@ -241,7 +241,7 @@ subMapping () {
 	# If audio language tags are not present, it is safe to assume subtitle language tags aren't either
 		SUBCOMMAND="-c:s copy"
 		while read rawIndex; do
-			index=$(awk "BEGIN {print $rawIndex - ${firstTrack}}" | bc)
+			index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
 			SUBCOMMAND="${SUBCOMMAND} -map 0:s:${index}"
 		done <<< "$(jq '.[].index' <<< "${SELECTEDSUBS}")"
 	fi
@@ -255,7 +255,7 @@ subMapping () {
         else
 		# When there are fonts, pulls in ASS sub style lines from the tracks selected
 		while read subIndex ; do
-			index=$(awk "BEGIN {print $subIndex - ${firstTrack}}" | bc)
+			index=$(awk "BEGIN {print ${subIndex} - ${firstTrack}}" | bc)
 			isSubASS=$(jq --arg l ${index} '.streams[$l|fromjson] | select(.codec_name == ("ass"))' <<< ${SUBFFPROBE} | jq -e '. | length != 0')
 			if [ "${isSubASS}" = 'true' ]; then
 				newFonts=$(ffmpeg -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass - | egrep "^Style:" | awk -F ':' '{print $2}' | awk -F ',' '{print $2}')
@@ -264,7 +264,7 @@ subMapping () {
 		done <<< "$(jq '.[].index' <<< "${SELECTEDSUBS}")"
                 uniqueFonts=$(echo -e "${fonts}" | sort | uniq)
                 ATTACHMENTCOMMAND=$(while read attachmentIndex ; do
-                        index=$(awk "BEGIN {print $attachmentIndex - ${firstAttachmentTrack}}" | bc)
+                        index=$(awk "BEGIN {print ${attachmentIndex} - ${firstAttachmentTrack}}" | bc)
                         fontFileName=$(jq --arg l ${index} '.streams[$l|fromjson].tags.filename' <<< ${ATTACHMENTFFPROBE})
                         ffmpeg -dump_attachment:t:${index} "${fontFileName}" -i "${INPUTFILE}"
                         fontFullName=$(fc-scan "${fontFileName}" | egrep "family:|fullname:|postscriptname:" | awk -F ': ' '{print $2}')
@@ -415,30 +415,30 @@ generateFilters () {
 	# RESCALE=1 forces 16:9 ratio.  Some poorly mastered DVDs will have a SAR and DAR that don't result
 	# in the ratio equaling 16:9.  RESCALE=2 forces 4:3 ratio.  Else dynamically determine DAR and set SAR to 1:1.
 	if [ ${RESCALE} -eq 1 ]; then
-		h_float=$(awk "BEGIN {print $w / 1.777777778}" | bc)
+		h_float=$(awk "BEGIN {print ${w} / 1.777777778}" | bc)
 		h_scale=$(printf "%.0f" ${h_float})
 		FILTERS="${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
 	elif [ ${RESCALE} -eq 2 ]; then
-		w_float=$(awk "BEGIN {print $h * 1.333}" | bc)
+		w_float=$(awk "BEGIN {print ${h} * 1.333}" | bc)
 		w_scale=$(printf "%.0f" ${w_float})
 		FILTERS="${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
 	else
 		if [[ "${sar}" != "1:1" ]]; then
 			sarRatio1=$(echo ${sar} | awk -F ':' '{print $1}')
 			sarRatio2=$(echo ${sar} | awk -F ':' '{print $2}')
-			sarRatio=$(awk "BEGIN {print $sarRatio1 / ${sarRatio2}}")
+			sarRatio=$(awk "BEGIN {print ${sarRatio1} / ${sarRatio2}}")
 			darRatio1=$(echo ${dar} | awk -F ':' '{print $1}')
 			darRatio2=$(echo ${dar} | awk -F ':' '{print $2}')
-			darRatio=$(awk "BEGIN {print $darRatio1 / ${darRatio2}}")
-	                ratio=$(awk "BEGIN {print $darRatio * ${sarRatio}}")
-			ratioDiff=$(awk "BEGIN {print $ratio - 1.333}")
+			darRatio=$(awk "BEGIN {print ${darRatio1} / ${darRatio2}}")
+	                ratio=$(awk "BEGIN {print ${darRatio} * ${sarRatio}}")
+			ratioDiff=$(awk "BEGIN {print ${ratio} - 1.333}")
 			ratioDiff=${ratioDiff#-}
 			if [[ $(awk "BEGIN{print (${ratioDiff} < 0.2)}") -eq 1 ]]; then
-                		w_float=$(awk "BEGIN {print $h * 1.333}" | bc)
+                		w_float=$(awk "BEGIN {print ${h} * 1.333}" | bc)
 				w_scale=$(printf "%.0f" ${w_float})
 				FILTERS="${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
 			else
-				h_float=$(awk "BEGIN {print $w / ${ratio}}" | bc)
+				h_float=$(awk "BEGIN {print ${w} / ${ratio}}" | bc)
 				h_scale=$(printf "%.0f" ${h_float})
 				FILTERS="${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
 			fi
