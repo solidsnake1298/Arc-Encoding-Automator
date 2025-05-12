@@ -24,9 +24,10 @@ SUBCOMMAND=""
 ATTACHMENTCOMMAND=""
 NOHWADECODE=0
 SCRATCHDIR=""
+ENGLISHSELECTION=0
 
 # Reads input paramamters
-while getopts i:c:a:k:r:s:h:w: option; do
+while getopts i:c:a:k:r:s:h:w:e: option; do
         case ${option} in
                 i) INPUTFILE=${OPTARG};;
                 c) CHAPTERSEPISODE=${OPTARG};;
@@ -36,6 +37,7 @@ while getopts i:c:a:k:r:s:h:w: option; do
 		s) CHAPSELECT=${OPTARG};;
 		h) NOHWADECODE=${OPTARG};;
 		w) SCRATCHDIR=${OPTARG};;
+		e) ENGLISHSELECTION=${OPTARG};;
                \?) echo "Invalid option"
                    exit;;
         esac
@@ -46,7 +48,7 @@ if [ -z "${INPUTFILE}" ]; then
         echo "No input file was provided."
         exit 1
 fi
-# If no SCRATCHDIR provided, use current dir if none provided
+# If no SCRATCHDIR provided, use current dir
 if [ -z "${SCRATCHDIR}" ]; then
 	SCRATCHDIR="."
 fi
@@ -99,6 +101,37 @@ echo -e "${CHAPTERFILES}" | while read file; do
 		-max_muxing_queue_size 2048 \
 		-max_interleave_delta 0 \
 		-avoid_negative_ts disabled \
+                "${outputFile}" < /dev/null
+done
+}
+
+# Only remuxes tracks with selected languages
+remuxOnly () {
+echo -e "${CHAPTERFILES}" | while read file; do
+        inputFile="${file}"
+        local audioCommand=$(audioMapping)
+        local subCommand=$(subMapping)
+        if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
+                outputFile=$(echo ${inputFile} | awk -F '/' '{print $NF}' | sed "s/-remux.${newExt}/-all.mkv/g")
+        else
+                outputFile=$(echo ${inputFile} | awk -F '/' '{print $NF}')
+        fi
+        ffmpeg \
+                -y \
+                -hide_banner \
+                -stats \
+                -fflags +genpts+igndts \
+                -loglevel error \
+                -i "${inputFile}" \
+                -map_chapters 0 \
+                -map 0:v:0 \
+                -c:v copy \
+                ${audioCommand} \
+                ${subCommand} \
+                -disposition:s 0 \
+                -max_muxing_queue_size 2048 \
+                -max_interleave_delta 0 \
+                -avoid_negative_ts disabled \
                 "${outputFile}" < /dev/null
 done
 }
@@ -186,7 +219,7 @@ audioMapping () {
 		contains ${rawIndex} ${skipConversion}
 		compatCodec=$(echo $? | bc)
 		index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
-		if [ ${compatCodec} -eq 0 ]; then
+		if [ ${compatCodec} -eq 0 ] || [ ${ENGLISHSELECTION} -eq 1 ]; then
 	                audioLoop="-map 0:a:${index} -c:a:${trackNumber} copy"
 			((++trackNumber))
 			echo ${audioLoop}
@@ -572,7 +605,11 @@ generateFilters
 # If the -f 1 option is used, all audio tracks will be converted to OPUS.
 # If a lossless Dolby/DTS codec exists for English and/or Japanese, the lossy tracks
 # will be discarded in favor of converting only the lossless track.
-av1Encode
+if [ ${ENGLISHSELECTION} -eq 1 ]; then
+	remuxOnly
+else
+	av1Encode
+fi
 
 # WIP cleanup
 rm -f "${remuxOutputFile}"
