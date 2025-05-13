@@ -420,12 +420,12 @@ chapterSelect () {
         startTime=$(jq .chapters[${startChapter}].start_time <<< "${chapterProbe}" | sed 's/\"//g')
         endTime=$(jq .chapters[${endChapter}].end_time <<< "${chapterProbe}" | sed 's/\"//g')
         ext=$(echo ${remuxOutputFile} | awk -F '.' '{print $NF}')
-        outputFile=$(echo ${remuxOutputFile} | sed "s/.${ext}//g")
+	outputFile=$(echo ${remuxOutputFile} | awk -F '/' '{print $NF}' | sed "s/.${ext}//g")
         chapterSelect="-ss ${startTime} -to ${endTime}"
         segmentFile=$(echo "${WIP}/${startChapter}-${endChapter}-${outputFile}.mkv")
                 
         ffmpeg -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterSelect} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
-        CHAPTERFILES="${CHAPTERFILES}\n${segmentFile}"
+        #CHAPTERFILES="${CHAPTERFILES}\n${segmentFile}"
 }
 
 # Generates video filters for vpp_qsv
@@ -601,6 +601,7 @@ elif [ ! -z ${CHAPSELECT} ]; then
 		ENDCHAP=$(echo ${segment} | awk -F ':' '{print $2}')
 		chapterSelect ${STARTCHAP} ${ENDCHAP}
 	done
+	CHAPTERFILES=$(ls ${WIP})
 else
         CHAPTERFILES=$(echo "${remuxOutputFile}")
 fi
