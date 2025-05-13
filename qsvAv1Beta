@@ -61,15 +61,19 @@ WIP=${SCRATCHDIR}/WIP
 # Includes attachments if present.  If splitting out episodes from a MKV that came off the disc as a single file, it will loop through for each episode.
 # If using jellyfin-ffmpeg7.0.2-4 and newer, DV 7.6 and 8 will automatically be stripped.
 av1Encode () {
-echo -e "${CHAPTERFILES}" | while read file; do
-	inputFile="${file}"
 	local audioCommand=$(audioMapping)
 	local subCommand=$(subMapping)
-	if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
-		outputFile=$(echo ${inputFile} | sed "s/-remux.${newExt}/-all.mkv/g")
-	else
-		outputFile=$(echo ${inputFile})
-	fi
+
+echo -e "${CHAPTERFILES}" | while read file; do
+	inputFile="${file}"
+        if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
+                outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-all.mkv/g")
+        else
+		inputFile=$(echo ${WIP}/${inputFile})
+                startChapter=$(echo ${inputFile} | awk -F '/' '{print $NF}' | awk -F '-' '{print $1}')
+                endChapter=$(echo ${inputFile} | awk -F '/' '{print $NF}' | awk -F '-' '{print $2}')
+                outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-${startChapter}-${endChapter}.mkv/g")
+        fi
         ffmpeg \
 		-y \
                 -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 \
@@ -109,14 +113,18 @@ done
 
 # Only remuxes tracks with selected languages
 remuxOnly () {
-echo -e "${CHAPTERFILES}" | while read file; do
-        inputFile="${file}"
         local audioCommand=$(audioMapping)
         local subCommand=$(subMapping)
+                
+echo -e "${CHAPTERFILES}" | while read file; do
+        inputFile="${file}"
         if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
                 outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-all.mkv/g")
         else
-                outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-all.mkv/g")
+                inputFile=$(echo ${WIP}/${inputFile})
+                startChapter=$(echo ${inputFile} | awk -F '/' '{print $NF}' | awk -F '-' '{print $1}')
+                endChapter=$(echo ${inputFile} | awk -F '/' '{print $NF}' | awk -F '-' '{print $2}')
+                outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-${startChapter}-${endChapter}.mkv/g")
         fi
         ffmpeg \
                 -y \
@@ -139,14 +147,18 @@ done
 }
 
 audioConversionOnly () {
-echo -e "${CHAPTERFILES}" | while read file; do
-        inputFile="${file}"
         local audioCommand=$(audioMapping)
         local subCommand=$(subMapping)
+                
+echo -e "${CHAPTERFILES}" | while read file; do
+        inputFile="${file}"
         if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
-                outputFile=$(echo ${inputFile} | awk -F '/' '{print $NF}' | sed "s/-remux.${newExt}/-all.mkv/g")
+                outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-all.mkv/g")
         else
-                outputFile=$(echo ${inputFile} | awk -F '/' '{print $NF}')
+                inputFile=$(echo ${WIP}/${inputFile})
+                startChapter=$(echo ${inputFile} | awk -F '/' '{print $NF}' | awk -F '-' '{print $1}')
+                endChapter=$(echo ${inputFile} | awk -F '/' '{print $NF}' | awk -F '-' '{print $2}')
+                outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-${startChapter}-${endChapter}.mkv/g")
         fi
         ffmpeg \
                 -y \
@@ -371,15 +383,16 @@ splitEpisodes () {
 		startTime=$(jq .chapters[${first}].start_time <<< "${chapterProbe}" | sed 's/\"//g')
 	        endTime=$(jq .chapters[${last}].end_time <<< "${chapterProbe}" | sed 's/\"//g')
 		ext=$(echo ${remuxOutputFile} | awk -F '.' '{print $NF}')
-		outputFile=$(echo ${remuxOutputFile} | sed "s/.${ext}//g")
+		outputFile=$(echo ${remuxOutputFile} | awk -F '/' '{print $NF}' | sed "s/.${ext}//g")
        	        chapterSelect="-ss ${startTime} -to ${endTime}"
 		segmentFile=$(echo "${WIP}/${first}-${last}-${outputFile}.mkv")
 
 		ffmpeg -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterSelect} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
-		CHAPTERFILES="${CHAPTERFILES}\n${segmentFile}"
+		#CHAPTERFILES="${CHAPTERFILES}\n${segmentFile}"
 
 	        i=$(echo $((${i} + ${CHAPTERSEPISODE})) | bc)
 	done
+	CHAPTERFILES=$(ls ${WIP})
 }
 
 # Cuts out section on chapter markers specified.
