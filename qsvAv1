@@ -192,7 +192,7 @@ audioMapping () {
 		if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
 			FINALAUDIO=$(jq -r '.[] | .index' <<< "${SELECTEDAUDIO}")
 		else
-			lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | head -1)
+			lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
 			if [ ! -z "${lossless}" ]; then
 				codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 				if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
@@ -205,7 +205,7 @@ audioMapping () {
 			else
 				FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
 			fi
-                        lossless=$(jq -r '.[] | select(.tags.language == ("jpn"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | head -1)
+                        lossless=$(jq -r '.[] | select(.tags.language == ("jpn"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
@@ -218,7 +218,7 @@ audioMapping () {
                         else
 				FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")"
                         fi
-                        lossless=$(jq -r '.[] | select(.tags.language == ("kor"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | head -1)
+                        lossless=$(jq -r '.[] | select(.tags.language == ("kor"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
@@ -238,7 +238,7 @@ audioMapping () {
 			SELECTEDAUDIO=$(jq '[.streams[]]' <<< "${AUDIOFFPROBE}")
 			FINALAUDIO=$(jq -r '.[] | .index' <<< "${SELECTEDAUDIO}")
 		else
-                	lossless=$(egrep -i "dts-hd ma|truehd|flac" <<< "${SELECTEDAUDIO}" | head -1)
+                	lossless=$(egrep -i "dts-hd ma|truehd|flac" <<< "${SELECTEDAUDIO}" | grep -v "title" | head -1)
 	                if [ ! -z "${lossless}" ]; then
 	                        codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 	                        if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
@@ -542,15 +542,15 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
 	if [ "${NOMOVTEXT}" = 'false' ] && [ "${NOMSMPEG}" = 'true' ]; then
 	        newExt="mp4"
 	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-	        ffmpeg -fflags +genpts+igndts -y -i "${inputFile}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${SCRATCHDIR}/${remuxOutputFile}"
+	        ffmpeg -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
         elif [[ "${ext}" == "m2ts" ]]; then
 		newExt="m2ts"
 	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-		ffmpeg -fflags +genpts+igndts -y -i "${inputFile}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+		ffmpeg -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
 	else
 	        newExt="mkv"
 	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-	        ffmpeg -fflags +genpts+igndts -y -i "${inputFile}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+	        ffmpeg -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
 	fi
 else
 	newExt="mkv"
