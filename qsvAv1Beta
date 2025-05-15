@@ -384,10 +384,10 @@ splitEpisodes () {
 	        endTime=$(jq .chapters[${last}].end_time <<< "${chapterProbe}" | sed 's/\"//g')
 		ext=$(echo ${remuxOutputFile} | awk -F '.' '{print $NF}')
 		outputFile=$(echo ${remuxOutputFile} | awk -F '/' '{print $NF}' | sed "s/.${ext}//g")
-       	        chapterSelect="-ss ${startTime} -to ${endTime}"
+       	        chapterTimestamp="-ss ${startTime} -to ${endTime}"
 		segmentFile=$(echo "${WIP}/${first}-${last}-${outputFile}.mkv")
 
-		ffmpeg -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterSelect} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
+		ffmpeg -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
 		#CHAPTERFILES="${CHAPTERFILES}\n${segmentFile}"
 
 	        i=$(echo $((${i} + ${CHAPTERSEPISODE})) | bc)
@@ -421,10 +421,10 @@ chapterSelect () {
         endTime=$(jq .chapters[${endChapter}].end_time <<< "${chapterProbe}" | sed 's/\"//g')
         ext=$(echo ${remuxOutputFile} | awk -F '.' '{print $NF}')
 	outputFile=$(echo ${remuxOutputFile} | awk -F '/' '{print $NF}' | sed "s/.${ext}//g")
-        chapterSelect="-ss ${startTime} -to ${endTime}"
+        chapterTimestamp="-ss ${startTime} -to ${endTime}"
         segmentFile=$(echo "${WIP}/${startChapter}-${endChapter}-${outputFile}.mkv")
                 
-        ffmpeg -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterSelect} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
+        ffmpeg -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
         #CHAPTERFILES="${CHAPTERFILES}\n${segmentFile}"
 }
 
@@ -527,6 +527,26 @@ generateFilters () {
 
 }
 
+convertEIA608 () {
+	eiaTracks=$(ffprobe -loglevel error -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("eia_608")) | .index')
+	otherSubTracks=$(ffprobe -loglevel error -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name != ("eia_608")) | .index')
+	mkdir $WIP
+	srtMKVFile=$(echo ${INPUTFILE} | awk -F '/' '{print $NF}' | sed "s/.${ext}/-subs.mkv/g")
+	mapEIATracks=$(for index in ${eiaTracks}; do
+		echo "-map 0:${index}"
+	done)
+	ffmpeg -y -i "${INPUTFILE}" -vn -an ${mapEIATracks} -c:s srt "${WIP}/${srtMKVFile}"
+	mapSubTracks=$(if [ -z ${otherSubTracks} ]; then
+			echo "-map 1:s"
+		else
+			for index in ${otherSubTracks}; do
+				echo "-map 0:${index}"
+			done
+			echo "-map 1:s"
+		fi)
+	ffmpeg -fflags +genpts+igndts -y -i "${INPUTFILE}" -i "${WIP}/${srtMKVFile}" -codec copy -map_chapters 0 -map 0:v -map 0:a? ${mapSubTracks} -map 0:t? "${remuxOutputFile}"
+}
+
 # Remuxes input file so that video tracks are grouped first, audio second, subs, third.  Simplifies track selection logic
 # and resolves issues where weirdly ordered input files cause improper track selection.
 ext=$(echo ${INPUTFILE} | awk -F '.' '{print $NF}')
@@ -535,14 +555,19 @@ newExt=""
 
 SUBFFPROBE=$(ffprobe -loglevel error -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json)
 NOMOVTEXT=$(jq '[.streams[] | select(.codec_name == ("mov_text"))]' <<< ${SUBFFPROBE} | jq -e '. | length == 0')
+NOEIA608=$(jq '[.streams[] | select(.codec_name == ("eia_608"))]' <<< ${SUBFFPROBE} | jq -e '. | length == 0')
 NOMSMPEG=$(ffprobe -loglevel error -i "${INPUTFILE}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.codec_name == ("msmpeg4v3"))] | length == 0')
 inputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}')
 
-if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]] || [[ "${ext}" == "m2ts" ]]; then
+if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]] || [[ "${ext}" == "m2ts" ]] || [ "${NOEIA608}" = 'false' ]; then
 	if [ "${NOMOVTEXT}" = 'false' ] && [ "${NOMSMPEG}" = 'true' ]; then
 	        newExt="mp4"
 	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
 	        ffmpeg -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+	elif [ "${NOEIA608}" = 'false' ]; then
+		newExt="mkv"
+	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
+		convertEIA608
         elif [[ "${ext}" == "m2ts" ]]; then
 		newExt="m2ts"
 	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
