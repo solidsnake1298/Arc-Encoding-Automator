@@ -56,6 +56,7 @@ if [ -z "${SCRATCHDIR}" ]; then
 fi
 
 WIP=${SCRATCHDIR}/WIP
+mkdir ${WIP}
 
 # Uses Intel QSV to encode the original AV1.  Maps the audio tracks for the selected languages, and converts to them to OPUS.
 # Includes attachments if present.  If splitting out episodes from a MKV that came off the disc as a single file, it will loop through for each episode.
@@ -65,7 +66,7 @@ av1Encode () {
 	local subCommand=$(subMapping)
 
 echo -e "${CHAPTERFILES}" | while read file; do
-	echo "Converting ${file}"
+	echo "Converting to AV1 ${INPUTFILE}"
 	inputFile="${file}"
         if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
                 outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-all.mkv/g")
@@ -118,7 +119,7 @@ remuxOnly () {
         local subCommand=$(subMapping)
                 
 echo -e "${CHAPTERFILES}" | while read file; do
-	echo "Converting ${file}"
+	echo "Remuxing ${INPUTFILE}"
         inputFile="${file}"
         if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
                 outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-all.mkv/g")
@@ -153,7 +154,7 @@ audioConversionOnly () {
         local subCommand=$(subMapping)
                 
 echo -e "${CHAPTERFILES}" | while read file; do
-	echo "Converting ${file}"
+	echo "Converting audio only for ${INPUTFILE}"
         inputFile="${file}"
         if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
                 outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-all.mkv/g")
@@ -187,77 +188,117 @@ done
 audioMapping () {
 	if [ ${ANIME} -eq 1 ]; then
 		# checks if audio.json is empty due to untagged streams
-		if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
-			SELECTEDAUDIO=$(jq '[.streams[]]' <<< "${AUDIOFFPROBE}")
-		fi
-
 		# if lossless tracks are present, ignore lossy tracks
 		if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
-			FINALAUDIO=$(jq -r '.[] | .index' <<< "${SELECTEDAUDIO}")
+			echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
+			FINALAUDIO=$(jq -r '[streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
 		else
 			lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
 			if [ ! -z "${lossless}" ]; then
+				echo "Finding lossless English audio tracks, if any" > /dev/tty
 				codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 				if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+					echo "Found DTS HD Master Audio track.  Ignoring other English tracks" > /dev/tty
 				elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+					echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" > /dev/tty
 				elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+					echo "Found FLAC audio track.  Ignoring other English tracks" > /dev/tty
 				fi
 			else
 				FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+				echo "No lossless English tracks found" > /dev/tty
 			fi
                         lossless=$(jq -r '.[] | select(.tags.language == ("jpn"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
+				echo "Finding lossless Japanese audio tracks, if any" > /dev/tty
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")"
+					echo "Found DTS HD Master Audio track.  Ignoring other Japanese tracks" > /dev/tty
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")"
+					echo "Found Dolby TrueHD audio track.  Ignoring other Japanese tracks" > /dev/tty
                                 elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")"
+					echo "Found FLAC audio track.  Ignoring other Japanese tracks" > /dev/tty
                                 fi
                         else
 				FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")"
+				echo "No lossless Japanese tracks found" > /dev/tty
+                        fi
+		fi
+	elif [ ${KOREAN} -eq 1 ]; then
+                if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
+                        echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
+                        FINALAUDIO=$(jq -r '[streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
+                else
+                        lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
+                        if [ ! -z "${lossless}" ]; then
+                                echo "Finding lossless English audio tracks, if any" > /dev/tty
+                                codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
+                                if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
+                                        FINALAUDIO=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+                                        echo "Found DTS HD Master Audio track.  Ignoring other English tracks" > /dev/tty
+                                elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
+                                        FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+                                        echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" > /dev/tty
+                                elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
+                                        FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+                                        echo "Found FLAC audio track.  Ignoring other English tracks" > /dev/tty
+                                fi
+                        else
+                                FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+                                echo "No lossless English tracks found" > /dev/tty
                         fi
                         lossless=$(jq -r '.[] | select(.tags.language == ("kor"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
+				echo "Finding lossless Korean audio tracks, if any" > /dev/tty
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
                                         FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("kor")) | .index' <<< "${SELECTEDAUDIO}")"
+					echo "Found DTS HD Master Audio track.  Ignoring other Korean tracks" > /dev/tty
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
                                         FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("kor")) | .index' <<< "${SELECTEDAUDIO}")"
+					echo "Found Dolby TrueHD audio track.  Ignoring other Korean tracks" > /dev/tty
                                 elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
                                         FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("kor")) | .index' <<< "${SELECTEDAUDIO}")"
+					echo "Found FLAC audio track.  Ignoring other Korean tracks" > /dev/tty
                                 fi
                         else
                                 FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.tags.language == ("kor")) | .index' <<< "${SELECTEDAUDIO}")"
+				echo "No lossless Korean tracks found" > /dev/tty
                         fi
 		fi
         else
                 # checks if audio.json is empty due to untagged streams
                 if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
-			SELECTEDAUDIO=$(jq '[.streams[]]' <<< "${AUDIOFFPROBE}")
-			FINALAUDIO=$(jq -r '.[] | .index' <<< "${SELECTEDAUDIO}")
+                        echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
+			FINALAUDIO=$(jq -r '[.streams[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
 		else
                 	lossless=$(egrep -i "dts-hd ma|truehd|flac" <<< "${SELECTEDAUDIO}" | grep -v "title" | head -1)
 	                if [ ! -z "${lossless}" ]; then
+				echo "Finding lossless English audio tracks, if any" > /dev/tty
 	                        codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 	                        if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) | .index' <<< "${SELECTEDAUDIO}")
+					echo "Found DTS HD Master Audio track.  Ignoring other English tracks" > /dev/tty
 	                        elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd")) | .index' <<< "${SELECTEDAUDIO}")
+					echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" > /dev/tty
 	                        elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("flac")) | .index' <<< "${SELECTEDAUDIO}")
+					echo "Found FLAC audio track.  Ignoring other English tracks" > /dev/tty
 	                        fi
 	                else
 				FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+				echo "No lossless English tracks found" > /dev/tty
 	                fi        
 		fi
 	fi
 	
-	#echo "Audio codec already FOSS or widely compatible."
 	firstTrack=$(jq -r '.streams[0] | .index' <<< "${AUDIOFFPROBE}" | bc)
 	skipConversion=$(jq -r '.[] | select(.codec_name == ("aac") or .codec_name == ("mp3") or .codec_name == ("flac") or .codec_name ==("opus") or .codec_name ==("vorbis")) | .index' <<< "${SELECTEDAUDIO}")
 	audioLoop=""
@@ -268,11 +309,13 @@ audioMapping () {
 		index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
 		if [ ${compatCodec} -eq 0 ] || [ ${ENGLISHSELECTION} -eq 1 ]; then
 	                audioLoop="-map 0:a:${index} -c:a:${trackNumber} copy"
+			echo "Audio codec for track ${trackNumber} is already FOSS or widely compatible." > /dev/tty
 			((++trackNumber))
 			echo ${audioLoop}
 		else
 			audioLoop="-map 0:a:${index} -c:a:${trackNumber} libopus -vbr on -compression_level 10 -application audio"
 			channels=$(jq --arg l ${index} '.streams[$l|fromjson].channels' <<< "${AUDIOFFPROBE}")
+			echo "Track ${trackNumber} will be converted to OPUS" > /dev/tty
 			if [ ${channels} -gt 2 -a ${channels} -lt 6 ]; then
 				audioLoop="-mapping_family 1 -ac ${channels}"
 			fi
@@ -300,8 +343,10 @@ subMapping () {
 	subIndexArray=""
 	# Checks for no subtitle track.  Common for older fansubs with burned in subtitles.
 	if [ "${EMPTYSUBJSON}" = 'true' ] || [ "${SELECTEDSUBS}" == "[]" ]; then
+		echo "No subtitles detected" > /dev/tty
 		SUBCOMMAND="-sn"
 	elif [ "${noMovText}" = 'false' ]; then
+		echo "Converting mov_text to SRT" > /dev/tty
 		trackNumber=0
 		SUBCOMMAND=$(while read rawIndex; do
 			index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
@@ -320,6 +365,7 @@ subMapping () {
 	else
 	# If audio language tags are not present, it is safe to assume subtitle language tags aren't either
 		SUBCOMMAND="-c:s copy"
+		echo "Mapping subtitle tracks" > /dev/tty
 		while read rawIndex; do
 			index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
 			SUBCOMMAND="${SUBCOMMAND} -map 0:s:${index}"
@@ -331,22 +377,28 @@ subMapping () {
 	firstAttachmentTrack=$(jq -r '.streams[0] | .index' <<< "${ATTACHMENTFFPROBE}" | bc)
         # Checks for attachments.  Only expected when using ASS subtitles.
         if [ "${EMPTYATTACHMENTJSON}" = 'true' ]; then
-               ATTACHMENTCOMMAND="-map 0:t?" 
+		echo "Including all attachments, if any" > /dev/tty
+        	ATTACHMENTCOMMAND="-map 0:t?"
+	elif [ "${SUBCOMMAND}" = '-sn' ]; then
+		echo "No subtitle tracks, dropping all attachments" > /dev/tty
+		ATTACHMENTCOMMAND=""
         else
+		echo "Extracting fonts used by selected ASS tracks" > /dev/tty
 		# When there are fonts, pulls in ASS sub style lines from the tracks selected
 		while read subIndex ; do
 			index=$(awk "BEGIN {print ${subIndex} - ${firstTrack}}" | bc)
 			isSubASS=$(jq --arg l ${index} '.streams[$l|fromjson] | select(.codec_name == ("ass"))' <<< ${SUBFFPROBE} | jq -e '. | length != 0')
 			if [ "${isSubASS}" = 'true' ]; then
-				newFonts=$(ffmpeg -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass - | egrep "^Style:" | awk -F ':' '{print $2}' | awk -F ',' '{print $2}')
+				newFonts=$(ffmpeg -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass - | egrep "^Style:" | awk -F ':' '{print $2}' | awk -F ',' '{print $2}')
 				fonts+="${newFonts}"
 			fi
 		done <<< "$(jq '.[].index' <<< "${SELECTEDSUBS}")"
+		echo "Dumping attachments and dropping unused fonts" > /dev/tty
                 uniqueFonts=$(echo -e "${fonts}" | sort | uniq)
                 ATTACHMENTCOMMAND=$(while read attachmentIndex ; do
                         index=$(awk "BEGIN {print ${attachmentIndex} - ${firstAttachmentTrack}}" | bc)
                         fontFileName=$(jq --arg l ${index} '.streams[$l|fromjson].tags.filename' <<< ${ATTACHMENTFFPROBE})
-                        ffmpeg -v error -dump_attachment:t:${index} "${fontFileName}" -i "${INPUTFILE}"
+                        ffmpeg -v fatal -dump_attachment:t:${index} "${fontFileName}" -i "${INPUTFILE}"
                         fontFullName=$(fc-scan "${fontFileName}" | egrep "family:|fullname:|postscriptname:" | awk -F ': ' '{print $2}')
                         fontPresent=$(egrep "${uniqueFonts//$'\n'/|}" <<< "${fontFullName}")
                         rm -f "${fontFileName}"
@@ -371,7 +423,6 @@ splitEpisodes () {
         # ffmpeg chapters start at zero.  Subtracting 1 to align with last chapter.
         totalChapters=$(echo $((${rawChapters} - 1)) | bc)
 
-	mkdir "${WIP}"
 	i=0
 	STARTSTOP=""
 	# Builds a colon separated list of chapter start:end
@@ -392,7 +443,7 @@ splitEpisodes () {
 
 		echo "Writing file for chapters ${first} thru ${last}"
 
-		ffmpeg -v error -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
+		ffmpeg -v error -stats -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
 
 	        i=$(echo $((${i} + ${CHAPTERSEPISODE})) | bc)
 	done
@@ -410,7 +461,6 @@ chapterSelect () {
         # Parses json file for the start time of each chapter.  Also counts number of chapters
         totalChapters=$(echo ${chapterProbe} | jq .chapters[].start_time | wc -l)
 
-        mkdir "${WIP}"
         STARTSTOP=""
         # Builds a colon separated list of chapter start:end
         if [ ${endChapter} -gt ${totalChapters} ]; then
@@ -427,7 +477,7 @@ chapterSelect () {
 	
 	echo "Writing file for chapters ${startChapter} thru ${endChapter}"
                 
-        ffmpeg -v error -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
+        ffmpeg -v error -stats -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
 }
 
 # Generates video filters for vpp_qsv
@@ -546,14 +596,13 @@ generateFilters () {
 }
 
 convertEIA608 () {
-	eiaTracks=$(ffprobe -v error -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("eia_608")) | .index')
-	otherSubTracks=$(ffprobe -v error -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name != ("eia_608")) | .index')
-	mkdir "${WIP}"
+	eiaTracks=$(ffprobe -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("eia_608")) | .index')
+	otherSubTracks=$(ffprobe -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name != ("eia_608")) | .index')
 	srtMKVFile=$(echo ${INPUTFILE} | awk -F '/' '{print $NF}' | sed "s/.${ext}/-subs.mkv/g")
 	mapEIATracks=$(for index in ${eiaTracks}; do
 		echo "-map 0:${index}"
 	done)
-	ffmpeg -v error -y -i "${INPUTFILE}" -vn -an ${mapEIATracks} -c:s srt "${WIP}/${srtMKVFile}"
+	ffmpeg -v error -stats -y -i "${INPUTFILE}" -vn -an ${mapEIATracks} -c:s srt "${WIP}/${srtMKVFile}"
 	mapSubTracks=$(if [ -z ${otherSubTracks} ]; then
 			echo "-map 1:s"
 		else
@@ -562,7 +611,8 @@ convertEIA608 () {
 			done
 			echo "-map 1:s"
 		fi)
-	ffmpeg -v error -fflags +genpts+igndts -y -i "${INPUTFILE}" -i "${WIP}/${srtMKVFile}" -codec copy -map_chapters 0 -map 0:v -map 0:a? ${mapSubTracks} -map 0:t? "${remuxOutputFile}"
+	ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -i "${WIP}/${srtMKVFile}" -codec copy -map_chapters 0 -map 0:v -map 0:a? ${mapSubTracks} -map 0:t? "${remuxOutputFile}"
+	rm -f "${WIP}/${srtMKVFile}"
 }
 
 # Remuxes input file so that video tracks are grouped first, audio second, subs, third.  Simplifies track selection logic
@@ -571,10 +621,10 @@ ext=$(echo ${INPUTFILE} | awk -F '.' '{print $NF}')
 remuxOutputFile=""
 newExt=""
 
-SUBFFPROBE=$(ffprobe -v error -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json)
+SUBFFPROBE=$(ffprobe -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json)
 NOMOVTEXT=$(jq '[.streams[] | select(.codec_name == ("mov_text"))]' <<< ${SUBFFPROBE} | jq -e '. | length == 0')
 NOEIA608=$(jq '[.streams[] | select(.codec_name == ("eia_608"))]' <<< ${SUBFFPROBE} | jq -e '. | length == 0')
-NOMSMPEG=$(ffprobe -v error -i "${INPUTFILE}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.codec_name == ("msmpeg4v3"))] | length == 0')
+NOMSMPEG=$(ffprobe -i "${INPUTFILE}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.codec_name == ("msmpeg4v3"))] | length == 0')
 inputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}')
 
 echo "Remuxing file to re-order tracks"
@@ -583,7 +633,7 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
 		echo "Remuxing to MP4"
 	        newExt="mp4"
 	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-	        ffmpeg -v error -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+	        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
 	elif [ "${NOEIA608}" = 'false' ]; then
 		echo "Remuxing to MKV and converting EIA608 subs"
 		newExt="mkv"
@@ -593,24 +643,24 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
 		echo "Remuxing to M2TS"
 		newExt="m2ts"
 	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-		ffmpeg -v error -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+		ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
 	else
 		echo "Remuxing to MKV"
 	        newExt="mkv"
 	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-	        ffmpeg -v error -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+	        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
 	fi
 else
 	echo "Remuxing to MKV"
 	newExt="mkv"
 	remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-	ffmpeg -v error -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+	ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
 fi
 
 
 # Get ffprobe info to be used by other functions.
-AUDIOFFPROBE=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams a -show_entries stream -v quiet -of json)
-SUBFFPROBE=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams s -show_entries stream -v quiet -of json)
+AUDIOFFPROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams a -show_entries stream -v quiet -of json)
+SUBFFPROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams s -show_entries stream -v quiet -of json)
 ATTACHMENTFFPROBE=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams t -show_entries stream=index -show_entries stream_tags=filename -of json)
 EMPTYAUDIOJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "${AUDIOFFPROBE}" | jq -e '. | length == 0')
 
@@ -621,7 +671,7 @@ UNTAGGEDSUBJSON=$(jq '[.streams[] | select(.tags.language)]' <<< "${SUBFFPROBE}"
 # Checks for attachments
 EMPTYATTACHMENTJSON=$(jq -e '.streams | length == 0' <<< "${ATTACHMENTFFPROBE}")
 
-SWDECODE=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.profile == ("High 10") or .profile == ("Advanced Simple Profile") or .codec_name == ("mpeg1video") or .codec_name == ("vp8") or .codec_name == ("vc1") or .codec_name == ("msmpeg4v3") or .codec_name == ("mpeg4") or .profile == ("High 4:2:2") or .profile == ("High 4:4:4 Predictive") or .codec_name == ("wmv2") or .codec_name == ("wmv3"))] | length != 0')
+SWDECODE=$(ffprobe -i "${remuxOutputFile}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.profile == ("High 10") or .profile == ("Advanced Simple Profile") or .codec_name == ("mpeg1video") or .codec_name == ("vp8") or .codec_name == ("vc1") or .codec_name == ("msmpeg4v3") or .codec_name == ("mpeg4") or .profile == ("High 4:2:2") or .profile == ("High 4:4:4 Predictive") or .codec_name == ("wmv2") or .codec_name == ("wmv3"))] | length != 0')
 
 if [[ "${SWDECODE}" == "true" ]]; then
 	echo "Disabling hardware accelerated decoding"
@@ -642,7 +692,7 @@ fi
 # If -s is used, it will loop through the segments provided to extract the episodes based on chapter numbers provided.
 # The segments start and end are colon sepearate, episodes are comma separated.
 if [ ! -z ${CHAPTERSEPISODE} ]; then
-        echo "Splitting file in ${CHAPTHERSEPISODE} chapter segments"
+        echo "Splitting file in ${CHAPTERSEPISODE} chapter segments"
         splitEpisodes ${CHAPTERSEPISODE}
 elif [ ! -z ${CHAPSELECT} ]; then
         echo "Using user provided start/end chapters."
@@ -669,8 +719,21 @@ if [ ${ANIME} -eq 1 ]; then
 			SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "${SUBFFPROBE}")
                 fi
         else
-		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx") or .tags.language == ("enm") or .tags.language == ("jpn"))]' <<< "${SUBFFPROBE}")
-        fi
+		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx") or .tags.language == ("enm"))]' <<< "${SUBFFPROBE}")
+		EMPTYSELECTEDSUBJSON=$(jq -e '.[] | length == 0' <<< "${SELECTEDSUBS}")
+                if [ "${EMPTYSELECTEDSUBJSON}" = 'true' ]; then
+			echo "No English subtitle tracks found.  Looking for mistagged \"Japanese\" tracks"
+			SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("jpn"))]' <<< "${SUBFFPROBE}")
+			EMPTYSELECTEDSUBJSON=$(jq -e '.[] | length == 0' <<< "${SELECTEDSUBS}")
+                	if [ "${EMPTYSELECTEDSUBJSON}" = 'true' ]; then
+				SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "${SUBFFPROBE}")
+				echo "Did not find English or Japanese subtitle tracks.  Selecting all subtitles."
+			else
+				echo "Found \"Japanese\" subtitles"
+			fi
+		fi
+	fi
+
 elif [ ${KOREAN} -eq 1 ]; then
         echo "Selecting English and Korean audio/subtitle tracks."
         SELECTEDAUDIO=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("kor"))]' <<< "${AUDIOFFPROBE}")
@@ -681,7 +744,7 @@ elif [ ${KOREAN} -eq 1 ]; then
                         SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "${SUBFFPROBE}")
                 fi
         else
-                SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx"))]' <<< "${SUBFFPROBE}")
+		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx") or .tags.language == ("enm"))]' <<< "${SUBFFPROBE}")
         fi
 else
 	echo "Selecting English audio/subtitle tracks."
@@ -697,10 +760,6 @@ else
 	fi
 fi
 
-# Analyzes video, generates crop, deinterlace, video quality, rescaling parameters for insertion in vpp_qsv filter.
-echo "Generating video filter parameters."
-generateFilters
-
 # If the -f 1 option is used, all audio tracks will be converted to OPUS.
 # If a lossless Dolby/DTS codec exists for English and/or Japanese, the lossy tracks
 # will be discarded in favor of converting only the lossless track.
@@ -711,6 +770,8 @@ elif [ ${AUDIOCONVERSION} -eq 1 ]; then
 	echo "Converting audio only"
 	audioConversionOnly
 else
+	echo "Generating video filter parameters."
+	generateFilters
 	echo "Converting to AV1"
 	av1Encode
 fi
