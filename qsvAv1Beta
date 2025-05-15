@@ -368,7 +368,7 @@ splitEpisodes () {
         # ffmpeg chapters start at zero.  Subtracting 1 to align with last chapter.
         totalChapters=$(echo $((${rawChapters} - 1)) | bc)
 
-	mkdir ${WIP}
+	mkdir "${WIP}"
 	i=0
 	STARTSTOP=""
 	# Builds a colon separated list of chapter start:end
@@ -409,7 +409,7 @@ chapterSelect () {
         # ffmpeg chapters start at zero.  Subtracting 1 to align with last chapter.
         #totalChapters=$(echo $((${rawChapters} - 1)) | bc)
 
-        mkdir ${WIP}
+        mkdir "${WIP}"
         STARTSTOP=""
         # Builds a colon separated list of chapter start:end
         if [ ${endChapter} -gt ${totalChapters} ]; then
@@ -530,7 +530,7 @@ generateFilters () {
 convertEIA608 () {
 	eiaTracks=$(ffprobe -loglevel error -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("eia_608")) | .index')
 	otherSubTracks=$(ffprobe -loglevel error -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name != ("eia_608")) | .index')
-	mkdir $WIP
+	mkdir "${WIP}"
 	srtMKVFile=$(echo ${INPUTFILE} | awk -F '/' '{print $NF}' | sed "s/.${ext}/-subs.mkv/g")
 	mapEIATracks=$(for index in ${eiaTracks}; do
 		echo "-map 0:${index}"
