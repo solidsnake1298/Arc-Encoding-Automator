@@ -192,6 +192,7 @@ audioMapping () {
 		if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
 			echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
 			FINALAUDIO=$(jq -r '[.streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
+			SELECTEDAUDIO=$(jq -r '[.streams.[]]' <<< "${AUDIOFFPROBE}")
 		else
 			lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
 			if [ ! -z "${lossless}" ]; then
@@ -234,6 +235,7 @@ audioMapping () {
                 if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
                         echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
                         FINALAUDIO=$(jq -r '[.streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
+			SELECTEDAUDIO=$(jq -r '[.streams.[]]' <<< "${AUDIOFFPROBE}")
                 else
                         lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
@@ -277,6 +279,7 @@ audioMapping () {
                 if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
                         echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
 			FINALAUDIO=$(jq -r '[.streams[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
+			SELECTEDAUDIO=$(jq -r '[.streams.[]]' <<< "${AUDIOFFPROBE}")
 		else
                 	lossless=$(egrep -i "dts-hd ma|truehd|flac" <<< "${SELECTEDAUDIO}" | grep -v "title" | head -1)
 	                if [ ! -z "${lossless}" ]; then
