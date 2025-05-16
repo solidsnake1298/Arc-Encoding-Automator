@@ -17,9 +17,9 @@ Automates media encoding to AV1, including handling language selection, converti
 - -a Enable with 1.  For use with Anime and other Japanese content.  Modifies language selection to also select Japanese in addition to English audio/subtitle tracks.
 - -k Enable with 1.  For use with Korean content.  Modifies language selection to also select Korean in addition to English audio/subtitle tracks.
 - -h Enable with 1.  Disables hardware decoding for codecs Arc GPUs don't support decoding.  Only needed for edge cases I haven't encountered yet.  Common codecs Arc doesn't support decoding already disable hardware decoding automatically.  The following source codecs will automatically disable hardware decoding: MPEG1, MPEG4, XVID, VC1, VP8, H264 Hi10p, H264 422, H264 444, and WMV codecs.
-- -w (BETA ONLY) Provide path for scratch directory.  Ideally, this should be on a separate disk from the input file to reduce disk I/O and improve throughput for the remux step.  Use quotes or escapes if path contains spaces or special characters.
-- -e (BETA ONLY) Enable with 1.  Language selection only.
-- -o (BETA ONLY) Enable with 1.  Encodes audio, passes thru video, selects audio/subtitle tracks.
+- -w Provide path for scratch directory.  Ideally, this should be on a separate disk from the input file to reduce disk I/O and improve throughput for the remux step.  Use quotes or escapes if path contains spaces or special characters.
+- -e Enable with 1.  Language selection only.
+- -o Enable with 1.  Encodes audio, passes thru video, selects audio/subtitle tracks.
 
 # Comments
 dovi_tool usage has been deprecated in favor of identical functionality added to Jellyfin-ffmpeg starting in 7.0.2-4.  This, and other changes, has allowed for significant stream lining of the various work flows.

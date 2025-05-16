@@ -191,7 +191,7 @@ audioMapping () {
 		# if lossless tracks are present, ignore lossy tracks
 		if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
 			echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
-			FINALAUDIO=$(jq -r '[streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
+			FINALAUDIO=$(jq -r '[.streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
 		else
 			lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
 			if [ ! -z "${lossless}" ]; then
@@ -233,7 +233,7 @@ audioMapping () {
 	elif [ ${KOREAN} -eq 1 ]; then
                 if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
                         echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
-                        FINALAUDIO=$(jq -r '[streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
+                        FINALAUDIO=$(jq -r '[.streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
                 else
                         lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
@@ -552,7 +552,7 @@ generateFilters () {
 		inputFormat="nv12"
 	fi
 
-	# RESCALE=1 forces 16:9 ratio.  Some poorly mastered DVDs will have a SAR and DAR that don't result
+	
 	# in the ratio equaling 16:9.  RESCALE=2 forces 4:3 ratio.  Else dynamically determine DAR and set SAR to 1:1.
 	if [ ${RESCALE} -eq 1 ]; then
 		echo "Manually altering dimensions for 16/9 video"
@@ -566,7 +566,7 @@ generateFilters () {
 		FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
 	else
 		echo "Automatically detecting SAR/DAR"
-		if [[ "${sar}" != "1:1" ]]; then
+		if [[ "${sar}" != "1:1" ]] && [ ! -z ${sar} ]; then
 			sarRatio1=$(echo ${sar} | awk -F ':' '{print $1}')
 			sarRatio2=$(echo ${sar} | awk -F ':' '{print $2}')
 			sarRatio=$(awk "BEGIN {print ${sarRatio1} / ${sarRatio2}}")
@@ -587,6 +587,9 @@ generateFilters () {
 				h_scale=$(printf "%.0f" ${h_float})
 				FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
 			fi
+		elif [ -z ${sar} ]; then
+			echo "SAR not set.  Setting to 1:1"
+			FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w}:h=${h}:format=p010le"
 		else
 			FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:format=p010le"
 	        fi
