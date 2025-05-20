@@ -343,7 +343,6 @@ contains() {
 subMapping () {
 	firstTrack=$(jq -r '.streams[0] | .index' <<< "${SUBFFPROBE}" | bc)
 	noMovText=$(jq '[.streams[] | select(.codec_name == ("mov_text"))]' <<< ${SUBFFPROBE} | jq -e '. | length == 0')
-	subIndexArray=""
 	# Checks for no subtitle track.  Common for older fansubs with burned in subtitles.
 	if [ "${EMPTYSUBJSON}" = 'true' ] || [ "${SELECTEDSUBS}" == "[]" ]; then
 		echo "No subtitles detected" > /dev/tty
@@ -353,7 +352,6 @@ subMapping () {
 		trackNumber=0
 		SUBCOMMAND=$(while read rawIndex; do
 			index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
-			subIndexArray="${subIndexArray} ${index}"
 			noMovText=$(jq --arg l ${index} '.streams[$l|fromjson] | select(.codec_name == ("mov_text"))' <<< ${SUBFFPROBE} | jq -e '. | length == 0')
 			if [ "${noMovText}" = 'false' ]; then
 				subLoop="-map 0:s:${index} -c:s:${trackNumber} srt"
