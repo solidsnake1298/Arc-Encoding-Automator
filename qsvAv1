@@ -14,6 +14,7 @@ CHAPTERSEPISODE=
 CHAPSELECT=
 ANIME=0
 KOREAN=0
+CHINESE=0
 RESCALE=0
 FILTERS=""
 CHAPTERFILES=""
@@ -29,12 +30,13 @@ AUDIOCONVERSION=0
 EMPTYCHAPTERPROBE=""
 
 # Reads input paramamters
-while getopts i:c:a:k:r:s:h:w:e:o: option; do
+while getopts i:c:a:k:r:s:h:w:e:o:m: option; do
         case ${option} in
                 i) INPUTFILE=${OPTARG};;
                 c) CHAPTERSEPISODE=${OPTARG};;
                 a) ANIME=${OPTARG};;
                 k) KOREAN=${OPTARG};;
+		m) CHINESE=${OPTARG};;
                 r) RESCALE=${OPTARG};;
 		s) CHAPSELECT=${OPTARG};;
 		h) NOHWADECODE=${OPTARG};;
@@ -281,6 +283,49 @@ audioMapping () {
 				echo "No lossless Korean tracks found" > /dev/tty
                         fi
 		fi
+        elif [ ${CHINESE} -eq 1 ]; then
+                if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
+                        echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
+                        FINALAUDIO=$(jq -r '[.streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
+                        SELECTEDAUDIO=$(jq -r '[.streams.[]]' <<< "${AUDIOFFPROBE}")
+                else    
+                        lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
+                        if [ ! -z "${lossless}" ]; then
+                                echo "Finding lossless English audio tracks, if any" > /dev/tty
+                                codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
+                                if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
+                                        FINALAUDIO=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+                                        echo "Found DTS HD Master Audio track.  Ignoring other English tracks" > /dev/tty
+                                elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
+                                        FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+                                        echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" > /dev/tty
+                                elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
+                                        FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+                                        echo "Found FLAC audio track.  Ignoring other English tracks" > /dev/tty
+                                fi
+                        else
+                                FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+                                echo "No lossless English tracks found" > /dev/tty
+                        fi
+                        lossless=$(jq -r '.[] | select(.tags.language == ("chi"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
+                        if [ ! -z "${lossless}" ]; then
+                                echo "Finding lossless Chinese audio tracks, if any" > /dev/tty
+                                codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
+                                if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
+                                        FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("chi")) | .index' <<< "${SELECTEDAUDIO}")"
+                                        echo "Found DTS HD Master Audio track.  Ignoring other Korean tracks" > /dev/tty
+                                elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
+                                        FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("chi")) | .index' <<< "${SELECTEDAUDIO}")"
+                                        echo "Found Dolby TrueHD audio track.  Ignoring other Korean tracks" > /dev/tty
+                                elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
+                                        FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("chi")) | .index' <<< "${SELECTEDAUDIO}")"
+                                        echo "Found FLAC audio track.  Ignoring other Korean tracks" > /dev/tty
+                                fi
+                        else
+                                FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.tags.language == ("chi")) | .index' <<< "${SELECTEDAUDIO}")"
+                                echo "No lossless Chinese tracks found" > /dev/tty
+                        fi
+                fi
         else
                 # checks if audio.json is empty due to untagged streams
                 if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
@@ -770,6 +815,18 @@ elif [ ${KOREAN} -eq 1 ]; then
                 fi
         else
 		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx") or .tags.language == ("enm"))]' <<< "${SUBFFPROBE}")
+        fi
+elif [ ${CHINESE} -eq 1 ]; then
+        echo "Selecting English and Chinese audio/subtitle tracks."
+        SELECTEDAUDIO=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("chi"))]' <<< "${AUDIOFFPROBE}")
+        if [ "${UNTAGGEDSUBJSON}" = 'true' ]; then
+                if [ "${EMPTYSUBJSON}" = 'true' ]; then
+                        echo "No subtitle track"
+                else
+                        SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "${SUBFFPROBE}")
+                fi
+        else
+                SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx") or .tags.language == ("enm"))]' <<< "${SUBFFPROBE}")
         fi
 else
 	echo "Selecting English audio/subtitle tracks."
