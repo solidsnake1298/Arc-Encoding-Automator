@@ -667,7 +667,7 @@ convertEIA608 () {
 			done
 			echo "-map 1:s"
 		fi)
-	ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -i "${WIP}/${srtMKVFile}" -codec copy -map_chapters 0 -map 0:v -map 0:a? ${mapSubTracks} -map 0:t? "${remuxOutputFile}"
+	ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -i "${WIP}/${srtMKVFile}" -codec copy -map_chapters 0 -map 0:v -map 0:a? ${mapSubTracks} -map 0:t? "${remuxOutputFile}" < /dev/null
 	rm -f "${WIP}/${srtMKVFile}"
 }
 
@@ -700,12 +700,11 @@ repairChapters () {
 
 	if [ ${LASTCHAPTER} -gt ${LENGTHMS} ]; then
 	        echo "Fixing bad last chapter for ${INPUTFILE}"
-	        ffmpeg -v error -y -i "${INPUTFILE}" -f ffmetadata ${CHAPTERS}
+	        ffmpeg -v error -y -i "${INPUTFILE}" -f ffmetadata ${CHAPTERS} < /dev/null
 	        lastEnd=$(cat ${CHAPTERS} | grep "END=" | tail -1 | awk -F '=' '{print $2}')
-		#LENGTHMS=$(awk "BEGIN {print ${LENGTHMS} * (${TIMEBASE})" | bc)
 		LENGTHMS=$(awk "BEGIN {print ${LENGTHMS} * 1000}" | bc)
 	        sed -i "s/${lastEnd}/${LENGTHMS}/g" ${CHAPTERS}
-	        ffmpeg -v error -y -fflags +genpts+igndts -i "${INPUTFILE}" -f ffmetadata -i ${CHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${remuxOutputFile}"
+	        ffmpeg -v error -y -fflags +genpts+igndts -i "${INPUTFILE}" -f ffmetadata -i ${CHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${remuxOutputFile}" < /dev/null
 	fi
 }
 
