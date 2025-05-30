@@ -307,22 +307,22 @@ audioMapping () {
                                 FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
                                 echo "No lossless English tracks found" > /dev/tty
                         fi
-                        lossless=$(jq -r '.[] | select(.tags.language == ("chi"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
+			lossless=$(jq -r '.[] | select(.tags.language == ("chi") or .tags.language == ("zho"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
                                 echo "Finding lossless Chinese audio tracks, if any" > /dev/tty
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
-                                        FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("chi")) | .index' <<< "${SELECTEDAUDIO}")"
+					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("chi") or .tags.language == ("zho")) | .index' <<< "${SELECTEDAUDIO}")"
                                         echo "Found DTS HD Master Audio track.  Ignoring other Korean tracks" > /dev/tty
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
-                                        FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("chi")) | .index' <<< "${SELECTEDAUDIO}")"
+					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("chi") or .tags.language == ("zho")) | .index' <<< "${SELECTEDAUDIO}")"
                                         echo "Found Dolby TrueHD audio track.  Ignoring other Korean tracks" > /dev/tty
                                 elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
-                                        FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("chi")) | .index' <<< "${SELECTEDAUDIO}")"
+					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("chi") or .tags.language == ("zho")) | .index' <<< "${SELECTEDAUDIO}")"
                                         echo "Found FLAC audio track.  Ignoring other Korean tracks" > /dev/tty
                                 fi
                         else
-                                FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.tags.language == ("chi")) | .index' <<< "${SELECTEDAUDIO}")"
+				FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.tags.language == ("chi") or .tags.language == ("zho")) | .index' <<< "${SELECTEDAUDIO}")"
                                 echo "No lossless Chinese tracks found" > /dev/tty
                         fi
                 fi
@@ -889,7 +889,7 @@ elif [ ${KOREAN} -eq 1 ]; then
         fi
 elif [ ${CHINESE} -eq 1 ]; then
         echo "Selecting English and Chinese audio/subtitle tracks."
-        SELECTEDAUDIO=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("chi"))]' <<< "${AUDIOFFPROBE}")
+	SELECTEDAUDIO=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("chi") or .tags.language == ("zho"))]' <<< "${AUDIOFFPROBE}")
         if [ "${UNTAGGEDSUBJSON}" = 'true' ]; then
                 if [ "${EMPTYSUBJSON}" = 'true' ]; then
                         echo "No subtitle track"
