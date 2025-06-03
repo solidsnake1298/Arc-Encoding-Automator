@@ -68,7 +68,7 @@ av1Encode () {
 	local audioCommand=$(audioMapping)
 	local subCommand=$(subMapping)
 
-echo -e "${CHAPTERFILES}" | while read file; do
+while read file; do
 	echo "Converting to AV1 ${INPUTFILE}"
 	inputFile="${file}"
         if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
@@ -115,7 +115,23 @@ echo -e "${CHAPTERFILES}" | while read file; do
 		-max_interleave_delta 0 \
 		-avoid_negative_ts disabled \
                 "${outputFile}" < /dev/null
-done
+done <<< "${CHAPTERFILES}"
+
+# Rechecks chapters, but only if present in input file
+# Duration can shift slightly during encoding, which causes the last chapter
+# to, potentially, end after the duration.
+if [ ${BADCHAPTER} -ne 0 ]; then
+        echo "Rechecking output file chapters"
+        BADCHAPTER=$(checkChapters "${outputFile}")
+        if [ ${BADCHAPTER} -gt 1 ]; then
+                newOutputFile=$(echo ${outputFile} | sed 's/.mkv/-chapterFix.mkv/g')
+                echo "Output file has bad chapters.  Duration can change slightly during encoding, triggering this issue."
+                repairChapters "${outputFile}" "${newOutputFile}"
+                mv "${newOutputFile}" "${outputFile}"
+        else
+                echo "All chapters valid in output file"
+        fi
+fi
 }
 
 # Only remuxes tracks with selected languages
@@ -123,7 +139,7 @@ remuxOnly () {
         local audioCommand=$(audioMapping)
         local subCommand=$(subMapping)
                 
-echo -e "${CHAPTERFILES}" | while read file; do
+while read file; do
 	echo "Remuxing ${INPUTFILE}"
         inputFile="${file}"
         if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
@@ -153,14 +169,30 @@ echo -e "${CHAPTERFILES}" | while read file; do
                 -max_interleave_delta 0 \
                 -avoid_negative_ts disabled \
                 "${outputFile}" < /dev/null
-done
+done <<< "${CHAPTERFILES}"
+
+# Rechecks chapters, but only if present in input file
+# Duration can shift slightly during encoding, which causes the last chapter
+# to, potentially, end after the duration.
+if [ ${BADCHAPTER} -ne 0 ]; then
+        echo "Rechecking output file chapters"
+        BADCHAPTER=$(checkChapters "${outputFile}")
+        if [ ${BADCHAPTER} -gt 1 ]; then
+                newOutfileFile=$(echo ${outputFile} | sed 's/.mkv/-chapterFix.mkv/g')
+                echo "Output file has bad chapters.  Duration can change slightly during encoding, triggering this issue."
+                repairChapters "${outputFile}" "${newOutputFile}"
+                mv "${newOutputFile}" "${outputFile}"
+        else
+                echo "All chapters valid in output file"
+        fi
+fi
 }
 
 audioConversionOnly () {
         local audioCommand=$(audioMapping)
         local subCommand=$(subMapping)
                 
-echo -e "${CHAPTERFILES}" | while read file; do
+while read file; do
 	echo "Converting audio only for ${INPUTFILE}"
         inputFile="${file}"
         if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
@@ -190,7 +222,23 @@ echo -e "${CHAPTERFILES}" | while read file; do
                 -max_interleave_delta 0 \
                 -avoid_negative_ts disabled \
                 "${outputFile}" < /dev/null
-done
+done <<< "${CHAPTERFILES}"
+
+# Rechecks chapters, but only if present in input file
+# Duration can shift slightly during encoding, which causes the last chapter
+# to, potentially, end after the duration.
+if [ ${BADCHAPTER} -ne 0 ]; then
+        echo "Rechecking output file chapters"
+        BADCHAPTER=$(checkChapters "${outputFile}")
+        if [ ${BADCHAPTER} -gt 1 ]; then
+                newOutfileFile=$(echo ${outputFile} | sed 's/.mkv/-chapterFix.mkv/g')
+                echo "Output file has bad chapters.  Duration can change slightly during encoding, triggering this issue."
+                repairChapters "${outputFile}" "${newOutputFile}"
+                mv "${newOutputFile}" "${outputFile}"
+        else
+                echo "All chapters valid in output file"
+        fi
+fi
 }
 
 # Selects English and Japanese audio tracks for processing.  If lossless tracks are present for a language, lossy tracks for that language are ignored.
@@ -673,47 +721,55 @@ convertEIA608 () {
 
 # Checks if end time for last chapter is after the video's duration
 checkChapters () {
-	LENGTH=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
-	LASTCHAPTEREND=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	LASTCHAPTERSTART=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | grep start_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	CHAPTERCOUNT=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | jq -r ' .[].[].id' | wc -l)
+	inputFileCheck=$1
+	LENGTH=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
+	LASTCHAPTEREND=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	LASTCHAPTERSTART=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | grep start_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	CHAPTERCOUNT=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | jq -r ' .[].[].id' | wc -l)
 	SECONDLASTCHAPTERENDINDEX=$(awk "BEGIN {print ${CHAPTERCOUNT} - 1}" | bc)
-	SECONDLASTCHAPTEREND=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | jq -r --arg l ${SECONDLASTCHAPTERENDINDEX} '[.chapters[]].[$l|fromjson]' | grep end_time | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	SECONDLASTCHAPTEREND=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | jq -r --arg l ${SECONDLASTCHAPTERENDINDEX} '[.chapters[]].[$l|fromjson]' | grep end_time | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
 
-	LENGTH=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
+	LENGTH=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
 
 	if [ -z ${LASTCHAPTEREND} ]; then
 	        echo "${INPUTFILE} - No chapters present" > /dev/tty
 		echo "0"
 	elif [ ${LASTCHAPTEREND} -gt ${LENGTH} ]; then
 	        echo "Fixing bad last chapter for ${INPUTFILE}" > /dev/tty
-		echo "1"
+		echo "2"
 	elif [ ! -z ${LASTCHAPTEREND} ] && [ ${SECONDLASTCHAPTEREND} -eq ${LASTCHAPTERSTART} ] && [ ${SECONDLASTCHAPTEREND} -eq ${LASTCHAPTEREND} ]; then
         	echo "${INPUTFILE} - Last chapter has no length.  Removing..." > /dev/tty
-		echo "2"
+		echo "3"
 	else
 	        echo "${INPUTFILE} - All chapters valid" > /dev/tty
-		echo "0"
+		echo "1"
 	fi
 }
 
 repairChapters () {
+	inputFileRepair=$1
+	outputFileRepair=$2
 	CHAPTERS=${WIP}/chapters.txt
 	NEWCHAPTERS=${WIP}/newChapters.txt
-	LASTCHAPTER=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	TIMEBASE=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | grep time_base | head -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	LENGTHMS=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
+	LASTCHAPTER=$(ffprobe -loglevel error -i "${inputFileRepair}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	TIMEBASE=$(ffprobe -loglevel error -i "${inputFileRepair}" -print_format json -show_chapters | grep time_base | head -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	LENGTHMS=$(ffprobe -loglevel error -i "${inputFileRepair}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
 
-	if [ ${BADCHAPTER} -eq 1 ]; then
-	        ffmpeg -v error -y -i "${INPUTFILE}" -f ffmetadata ${CHAPTERS} < /dev/null
-	        lastEnd=$(cat ${CHAPTERS} | grep "END=" | tail -1 | awk -F '=' '{print $2}')
-		LENGTHMS=$(awk "BEGIN {print ${LENGTHMS} * 1000}" | bc)
-	        sed -i "s/${lastEnd}/${LENGTHMS}/g" ${CHAPTERS}
-	        ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${INPUTFILE}" -f ffmetadata -i ${CHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${remuxOutputFile}" < /dev/null
-	elif [ ${BADCHAPTER} -eq 2 ]; then
-	        ffmpeg -v error -y -i "${INPUTFILE}" -f ffmetadata ${CHAPTERS} < /dev/null
+	ffmpeg -v error -y -i "${inputFileRepair}" -f ffmetadata ${CHAPTERS} < /dev/null
+	lastEnd=$(cat ${CHAPTERS} | grep "END=" | tail -1 | awk -F '=' '{print $2}')
+	lastStart=$(cat ${CHAPTERS} | grep "START=" | tail -1 | awk -F '=' '{print $2}')
+	LENGTHMS=$(awk "BEGIN {print ${LENGTHMS} * 1000}" | bc)
+	sed -i "s/${lastEnd}/${LENGTHMS}/g" ${CHAPTERS}
+	lastEndNew=$(cat ${CHAPTERS} | grep "END=" | tail -1 | awk -F '=' '{print $2}')
+	if [ ${lastEndNew} -le ${lastStart} ]; then
+			BADCHAPTER=3
+	fi
+	if [ ${BADCHAPTER} -eq 2 ]; then
+		ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${inputFileRepair}" -f ffmetadata -i ${CHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${outputFileRepair}" < /dev/null
+	elif [ ${BADCHAPTER} -eq 3 ]; then
+	        ffmpeg -v error -y -i "${inputFileRepair}" -f ffmetadata ${CHAPTERS} < /dev/null
 	        cat ${CHAPTERS} | head -n -5 > ${NEWCHAPTERS}
-	        ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${INPUTFILE}" -f ffmetadata -i ${NEWCHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${remuxOutputFile}" < /dev/null
+	        ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${inputFileRepair}" -f ffmetadata -i ${NEWCHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${outputFileRepair}" < /dev/null
 		rm $CHAPTERS $NEWCHAPTERS
 	fi
 }
@@ -731,7 +787,7 @@ NOMSMPEG=$(ffprobe -i "${INPUTFILE}" -select_streams v -show_entries stream -v q
 inputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}')
 
 # Checks if end time for last chapter is after the video's duration
-BADCHAPTER=$(checkChapters)
+BADCHAPTER=$(checkChapters "${INPUTFILE}")
 
 echo "Remuxing file to re-order tracks"
 if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]] || [[ "${ext}" == "m2ts" ]] || [ "${NOEIA608}" = 'false' ]; then
@@ -739,8 +795,8 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
 		echo "Remuxing to MP4"
 	        newExt="mp4"
 	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-		if [ ${BADCHAPTER} -ne 0 ]; then
-			repairChapters
+		if [ ${BADCHAPTER} -gt 1 ]; then
+			repairChapters "${INPUTFILE}" "${remuxOutputFile}"
 		else
 			ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
 		fi
@@ -748,8 +804,8 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
 		echo "Remuxing to MKV and converting EIA608 subs"
 		newExt="mkv"
 		remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-                if [ ${BADCHAPTER} -ne 0 ]; then
-                        repairChapters
+                if [ ${BADCHAPTER} -gt 1 ]; then
+			repairChapters "${INPUTFILE}" "${remuxOutputFile}"
 			convertEIA608
 		else
 			convertEIA608
@@ -758,8 +814,8 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
 		echo "Remuxing to M2TS"
 		newExt="m2ts"
 	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-                if [ ${BADCHAPTER} -ne 0 ]; then
-                        repairChapters
+                if [ ${BADCHAPTER} -gt 1 ]; then
+			repairChapters "${INPUTFILE}" "${remuxOutputFile}"
                 else
                         ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
                 fi
@@ -767,8 +823,8 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
 		echo "Remuxing to MKV"
 	        newExt="mkv"
 	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-                if [ ${BADCHAPTER} -ne 0 ]; then
-                        repairChapters
+                if [ ${BADCHAPTER} -gt 1 ]; then
+			repairChapters "${INPUTFILE}" "${remuxOutputFile}"
                 else
                         ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
                 fi
@@ -777,8 +833,8 @@ else
 	echo "Remuxing to MKV"
 	newExt="mkv"
 	remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-	if [ ${BADCHAPTER} -ne 0 ]; then
-		repairChapters
+	if [ ${BADCHAPTER} -gt 1 ]; then
+		repairChapters "${INPUTFILE}" "${remuxOutputFile}"
 	else
 		ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
 	fi
@@ -787,6 +843,7 @@ fi
 
 # Get ffprobe info to be used by other functions.
 AUDIOFFPROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams a -show_entries stream -v quiet -of json)
+AV1PROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.codec_name == ("av1"))]')
 SUBFFPROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams s -show_entries stream -v quiet -of json)
 ATTACHMENTFFPROBE=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams t -show_entries stream=index -show_entries stream_tags=filename -of json)
 EMPTYAUDIOJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "${AUDIOFFPROBE}" | jq -e '. | length == 0')
@@ -919,13 +976,15 @@ fi
 if [ ${ENGLISHSELECTION} -eq 1 ]; then
 	echo "Remux + English audio/subtitle selection only"
 	remuxOnly
-elif [ ${AUDIOCONVERSION} -eq 1 ]; then
+elif [ ${AUDIOCONVERSION} -eq 1 ] || [ "${AV1PROBE}" != "[]" ]; then
+	if [ "${AV1PROBE}" != "[]" ]; then
+		echo "Video codec is already AV1"
+	fi
 	echo "Converting audio only"
 	audioConversionOnly
 else
-	echo "Generating video filter parameters."
+	echo "Generating video filter parameters"
 	generateFilters
-	echo "Converting to AV1"
 	av1Encode
 fi
 
