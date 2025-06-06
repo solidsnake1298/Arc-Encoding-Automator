@@ -28,6 +28,7 @@ SCRATCHDIR=""
 ENGLISHSELECTION=0
 AUDIOCONVERSION=0
 EMPTYCHAPTERPROBE=""
+FRAMERATE=""
 
 # Reads input paramamters
 while getopts i:c:a:k:r:s:h:w:e:o:m: option; do
@@ -103,7 +104,7 @@ while read file; do
                 -vf vpp_qsv="${FILTERS}" \
 		${audioCommand} \
 		${subCommand} \
-		-fps_mode passthrough \
+		${FRAMERATE} \
 		-disposition:s 0 \
 		-low_delay_brc 1 \
 		-extbrc 1 \
@@ -597,7 +598,7 @@ generateFilters () {
 	duration=$(echo ${rawParams} | grep -o 'duration=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	deinterlaced=""
 	detelecine=""
-	detelecineFrameRate=""
+	FRAMERATE=""
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
@@ -631,12 +632,14 @@ generateFilters () {
 			echo "Telecine detected"
 			detelecine="pullup,"
 			newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.8}")
-			detelecineFrameRate="${newFrameRateNum}/${frameRateDenom}"
+			FRAMERATE="-r ${newFrameRateNum}/${frameRateDenom}"
 		else
 			echo "Telecine was not detected"
+			FRAMERATE="-fps_mode passthrough"
 		fi
 	else
 		echo "Detected progressive video"
+		FRAMERATE="-fps_mode passthrough"
 	fi
 
 	# ffmpeg to detect black bars for cropping.
