@@ -619,12 +619,6 @@ generateFilters () {
 		rawIdet=$(ffmpeg -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${remuxOutputFile}" 2>&1 | grep "frame detection" | tail -2)
 		idetProg1=$(echo $rawIdet | head -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
 		idetProg2=$(echo $rawIdet | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetTFF1=$(echo $rawIdet | head -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetTFF2=$(echo $rawIdet | tail -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetBFF1=$(echo $rawIdet | head -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetBFF2=$(echo $rawIdet | tail -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetUndet1=$(echo $rawIdet | head -1 | grep -o 'Undetermined: .*[0-9]' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetUndet2=$(echo $rawIdet | tail -1 | grep -o 'Undetermined: .*[0-9]' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
 		progRatio1=$(awk "BEGIN {print ${idetProg1} / ${readFrames} * 100}")
 		progRatio2=$(awk "BEGIN {print ( ${idetProg2} / ${readFrames} ) * 100}")
 
