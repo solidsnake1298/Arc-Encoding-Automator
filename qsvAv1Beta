@@ -585,11 +585,12 @@ chapterSelect () {
 # Generates video filters for vpp_qsv
 generateFilters () {
 	# ffprobe to determine if interlaced.  If yes, set yadif deinterlace filter.
-	rawParams=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams v:0 -show_entries stream=width,height,field_order,pix_fmt,sample_aspect_ratio,duration,display_aspect_ratio,r_frame_rate -show_entries stream_tags=NUMBER_OF_FRAMES)
+	rawParams=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams v:0 -show_entries streams)
 	interlaced=$(echo ${rawParams} | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}' | head -1)
+	videoLanguageTag=$(echo ${rawParams} | grep -o '')
 	frameRateNum=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $1}' | head -1)
 	frameRateDenom=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $2}' | head -1)
-	numOfFrames=$(echo ${rawParams} | grep -o 'NUMBER_OF_FRAMES=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
+	numOfFrames=$(echo -e "${rawParams}" | grep 'NUMBER_OF_FRAMES' | grep "=" | awk -F '=' '{print $2}' | head -1)
 	inputBitDepth=$(echo ${rawParams} | grep -o 'pix_fmt=[a-z,0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	sar=$(echo ${rawParams} | grep -o 'sample_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	dar=$(echo ${rawParams} | grep -o 'display_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}' | head -1)
@@ -619,10 +620,12 @@ generateFilters () {
 		rawIdet=$(ffmpeg -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${remuxOutputFile}" 2>&1 | grep "frame detection" | tail -2)
 		idetProg1=$(echo $rawIdet | head -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
 		idetProg2=$(echo $rawIdet | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		progRatio1=$(awk "BEGIN {print ${idetProg1} / ${readFrames} * 100}")
-		progRatio2=$(awk "BEGIN {print ( ${idetProg2} / ${readFrames} ) * 100}")
+		progRatio1=$(awk "BEGIN {print ( ${idetProg1} / ${readFrames} ) * 100}" | bc)
+		progRatioInt1=$( printf "%.0f" ${progRatio1} )
+		progRatio2=$(awk "BEGIN {print ( ${idetProg2} / ${readFrames} ) * 100}" | bc)
+		progRatioInt2=$( printf "%.0f" ${progRatio2} )
 
-		if [ ${progRatio1} -ge 10 ] || [ ${progRatio2} -ge 10 ]; then
+		if [ ${progRatioInt1} -ge 10 ] || [ ${progRatioInt2} -ge 10 ]; then
 			echo "Telecine detected"
 			detelecine="pullup,"
 			newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.8}")
@@ -680,8 +683,8 @@ generateFilters () {
 		inputFormat="nv12"
 	fi
 
-	
-	# in the ratio equaling 16:9.  RESCALE=2 forces 4:3 ratio.  Else dynamically determine DAR and set SAR to 1:1.
+	# Automatically or manually adjusts resolution if SAR is not 1:1.  If RESCALE=1 the SAR is set to 1:1 and
+	# the DAR is manually set to 16:9.  RESCALE=2 forces 4:3 ratio.  Else dynamically determine DAR and set SAR to 1:1.
 	if [ ${RESCALE} -eq 1 ]; then
 		echo "Manually altering dimensions for 16/9 video"
 		h_float=$(awk "BEGIN {print ${w} / 1.777777778}" | bc)
@@ -701,17 +704,25 @@ generateFilters () {
 			darRatio1=$(echo ${dar} | awk -F ':' '{print $1}')
 			darRatio2=$(echo ${dar} | awk -F ':' '{print $2}')
 			darRatio=$(awk "BEGIN {print ${darRatio1} / ${darRatio2}}")
+			darRatioWS=$(awk "BEGIN {print 16 /9}")
+			darRatioDiff=$(awk "BEGIN {print ${darRatio} - ${darRatioWS}}")
+			darRatioDiff=${darRatioDiff#-}
 	                ratio=$(awk "BEGIN {print ${darRatio} * ${sarRatio}}")
 			ratioDiff=$(awk "BEGIN {print ${ratio} - 1.333}")
 			ratioDiff=${ratioDiff#-}
 			if [[ $(awk "BEGIN{print (${ratioDiff} < 0.2)}") -eq 1 ]]; then
 				echo "Altering dimensions to fix aspect ratio to ~4/3"
-                		w_float=$(awk "BEGIN {print ${h} * 1.333}" | bc)
+                		w_float=$(awk "BEGIN {print ${height} * 1.333}" | bc)
 				w_scale=$(printf "%.0f" ${w_float})
 				FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
+			elif [[ $(awk "BEGIN{print (${ratioDiff} > 0.2)}") -eq 1 ]] && [[ $(awk "BEGIN{print (${darRatioDiff} < 0.05)}") -eq 1 ]]; then
+				echo "Altering dimension to fix aspect ratio to ~16/9"
+		                h_float=$(awk "BEGIN {print ${width} / 1.777777778}" | bc)
+		                h_scale=$(printf "%.0f" ${h_float})
+		                FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
 			else
 				echo "Altering dimensions to fix aspect ratio, widescreen"
-				h_float=$(awk "BEGIN {print ${w} / ${ratio}}" | bc)
+				h_float=$(awk "BEGIN {print ${width} / ${ratio}}" | bc)
 				h_scale=$(printf "%.0f" ${h_float})
 				FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
 			fi
