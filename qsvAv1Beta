@@ -178,7 +178,7 @@ if [ ${BADCHAPTER} -ne 0 ]; then
         echo "Rechecking output file chapters"
         BADCHAPTER=$(checkChapters "${outputFile}")
         if [ ${BADCHAPTER} -gt 1 ]; then
-                newOutfileFile=$(echo ${outputFile} | sed 's/.mkv/-chapterFix.mkv/g')
+                newOutputFile=$(echo ${outputFile} | sed 's/.mkv/-chapterFix.mkv/g')
                 echo "Output file has bad chapters.  Duration can change slightly during encoding, triggering this issue."
                 repairChapters "${outputFile}" "${newOutputFile}"
                 mv "${newOutputFile}" "${outputFile}"
@@ -231,7 +231,7 @@ if [ ${BADCHAPTER} -ne 0 ]; then
         echo "Rechecking output file chapters"
         BADCHAPTER=$(checkChapters "${outputFile}")
         if [ ${BADCHAPTER} -gt 1 ]; then
-                newOutfileFile=$(echo ${outputFile} | sed 's/.mkv/-chapterFix.mkv/g')
+                newOutputFile=$(echo ${outputFile} | sed 's/.mkv/-chapterFix.mkv/g')
                 echo "Output file has bad chapters.  Duration can change slightly during encoding, triggering this issue."
                 repairChapters "${outputFile}" "${newOutputFile}"
                 mv "${newOutputFile}" "${outputFile}"
@@ -584,8 +584,11 @@ chapterSelect () {
 # Generates video filters for vpp_qsv
 generateFilters () {
 	# ffprobe to determine if interlaced.  If yes, set yadif deinterlace filter.
-	rawParams=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams v:0 -show_entries stream=width,height,field_order,pix_fmt,sample_aspect_ratio,duration,display_aspect_ratio)
+	rawParams=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams v:0 -show_entries stream=width,height,field_order,pix_fmt,sample_aspect_ratio,duration,display_aspect_ratio,r_frame_rate -show_entries stream_tags=NUMBER_OF_FRAMES)
 	interlaced=$(echo ${rawParams} | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}' | head -1)
+	frameRateNum=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $1}' | head -1)
+	frameRateDenom=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $2}' | head -1)
+	numOfFrames=$(echo ${rawParams} | grep -o 'NUMBER_OF_FRAMES=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	inputBitDepth=$(echo ${rawParams} | grep -o 'pix_fmt=[a-z,0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	sar=$(echo ${rawParams} | grep -o 'sample_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	dar=$(echo ${rawParams} | grep -o 'display_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}' | head -1)
@@ -593,6 +596,8 @@ generateFilters () {
 	height=$(echo ${rawParams} | grep -o 'height=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	duration=$(echo ${rawParams} | grep -o 'duration=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	deinterlaced=""
+	detelecine=""
+	detelecineFrameRate=""
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
@@ -604,7 +609,32 @@ generateFilters () {
 	esac
 
 	if [ ${deinterlaced} -eq 2 ]; then
-		echo "Detected interlaced video"
+		echo "Detected interlaced video, checking for telecine"
+		if [ ${numOfFrames} -lt 3600 ]; then
+			readFrames=${numOfFrames}
+		else
+			readFrames=3600
+		fi
+		rawIdet=$(ffmpeg -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${remuxOutputFile}" 2>&1 | grep "frame detection" | tail -2)
+		idetProg1=$(echo $rawIdet | head -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetProg2=$(echo $rawIdet | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetTFF1=$(echo $rawIdet | head -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetTFF2=$(echo $rawIdet | tail -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetBFF1=$(echo $rawIdet | head -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetBFF2=$(echo $rawIdet | tail -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetUndet1=$(echo $rawIdet | head -1 | grep -o 'Undetermined: .*[0-9]' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetUndet2=$(echo $rawIdet | tail -1 | grep -o 'Undetermined: .*[0-9]' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		progRatio1=$(awk "BEGIN {print ${idetProg1} / ${readFrames} * 100}")
+		progRatio2=$(awk "BEGIN {print ( ${idetProg2} / ${readFrames} ) * 100}")
+
+		if [ ${progRatio1} -ge 10 ] || [ ${progRatio2} -ge 10 ]; then
+			echo "Telecine detected"
+			detelecine="pullup,"
+			newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.8}")
+			detelecineFrameRate="${newFrameRateNum}/${frameRateDenom}"
+		else
+			echo "Telecine was not detected"
+		fi
 	else
 		echo "Detected progressive video"
 	fi
@@ -659,12 +689,12 @@ generateFilters () {
 		echo "Manually altering dimensions for 16/9 video"
 		h_float=$(awk "BEGIN {print ${w} / 1.777777778}" | bc)
 		h_scale=$(printf "%.0f" ${h_float})
-		FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
+		FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
 	elif [ ${RESCALE} -eq 2 ]; then
 		echo "Manually altering dimensions for 4/3 video"
 		w_float=$(awk "BEGIN {print ${h} * 1.333}" | bc)
 		w_scale=$(printf "%.0f" ${w_float})
-		FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
+		FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
 	else
 		echo "Automatically detecting SAR/DAR"
 		if [[ "${sar}" != "1:1" ]] && [ ! -z ${sar} ]; then
@@ -681,16 +711,18 @@ generateFilters () {
 				echo "Altering dimensions to fix aspect ratio to ~4/3"
                 		w_float=$(awk "BEGIN {print ${h} * 1.333}" | bc)
 				w_scale=$(printf "%.0f" ${w_float})
-				FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
+				FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
 			else
 				echo "Altering dimensions to fix aspect ratio, widescreen"
 				h_float=$(awk "BEGIN {print ${w} / ${ratio}}" | bc)
 				h_scale=$(printf "%.0f" ${h_float})
-				FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
+				FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
 			fi
 		elif [ -z ${sar} ]; then
 			echo "SAR not set.  Setting to 1:1"
-			FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w}:h=${h}:format=p010le"
+			FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w}:h=${h}:format=p010le"
+		elif [ ! -z ${detelecine} ]; then
+			FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:${hwDL}format=${inputFormat},${detelecine}hwupload,format=p010le"
 		else
 			FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:format=p010le"
 	        fi
