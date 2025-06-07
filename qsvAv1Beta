@@ -101,7 +101,7 @@ while read file; do
                 -q:v 22 \
                 -look_ahead_depth 40 \
                 -preset veryslow \
-                -vf vpp_qsv="${FILTERS}" \
+                -vf "${FILTERS}" \
 		${audioCommand} \
 		${subCommand} \
 		${FRAMERATE} \
@@ -603,14 +603,14 @@ generateFilters () {
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
-	        tt) deinterlaced="2";;
-	        bb) deinterlaced="2";;
-	        tb) deinterlaced="2";;
-	        bt) deinterlaced="2";;
-	        *) deinterlaced="0";;
+	        tt) deinterlaced="deinterlaced=2:";;
+	        bb) deinterlaced="deinterlaced=2:";;
+	        tb) deinterlaced="deinterlaced=2:";;
+	        bt) deinterlaced="deinterlaced=2:";;
+	        *) deinterlaced="";;
 	esac
 
-	if [ ${deinterlaced} -eq 2 ]; then
+	if [ ! -z ${deinterlaced} ]; then
 		echo "Detected interlaced video, checking for telecine"
 		if [ ${numOfFrames} -lt 3600 ]; then
 			readFrames=${numOfFrames}
@@ -627,7 +627,8 @@ generateFilters () {
 
 		if [ ${progRatioInt1} -ge 10 ] || [ ${progRatioInt2} -ge 10 ]; then
 			echo "Telecine detected"
-			detelecine="pullup,"
+			deinterlaced=""
+			detelecine="pullup,yadif=0:-1:0,"
 			newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.8}")
 			FRAMERATE="-r ${newFrameRateNum}/${frameRateDenom}"
 		else
@@ -689,12 +690,12 @@ generateFilters () {
 		echo "Manually altering dimensions for 16/9 video"
 		h_float=$(awk "BEGIN {print ${w} / 1.777777778}" | bc)
 		h_scale=$(printf "%.0f" ${h_float})
-		FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
+		FILTERS="${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
 	elif [ ${RESCALE} -eq 2 ]; then
 		echo "Manually altering dimensions for 4/3 video"
 		w_float=$(awk "BEGIN {print ${h} * 1.333}" | bc)
 		w_scale=$(printf "%.0f" ${w_float})
-		FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
+		FILTERS="${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
 	else
 		echo "Automatically detecting SAR/DAR"
 		if [[ "${sar}" != "1:1" ]] && [ ! -z ${sar} ]; then
@@ -714,25 +715,25 @@ generateFilters () {
 				echo "Altering dimensions to fix aspect ratio to ~4/3"
                 		w_float=$(awk "BEGIN {print ${height} * 1.333}" | bc)
 				w_scale=$(printf "%.0f" ${w_float})
-				FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
+				FILTERS="${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
 			elif [[ $(awk "BEGIN{print (${ratioDiff} > 0.2)}") -eq 1 ]] && [[ $(awk "BEGIN{print (${darRatioDiff} < 0.05)}") -eq 1 ]]; then
 				echo "Altering dimension to fix aspect ratio to ~16/9"
 		                h_float=$(awk "BEGIN {print ${width} / 1.777777778}" | bc)
 		                h_scale=$(printf "%.0f" ${h_float})
-		                FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
+				FILTERS="${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
 			else
 				echo "Altering dimensions to fix aspect ratio, widescreen"
 				h_float=$(awk "BEGIN {print ${width} / ${ratio}}" | bc)
 				h_scale=$(printf "%.0f" ${h_float})
-				FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
+				FILTERS="${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
 			fi
 		elif [ -z ${sar} ]; then
 			echo "SAR not set.  Setting to 1:1"
-			FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,scale_qsv=w=${w}:h=${h}:format=p010le"
+			FILTERS="${hwDL}format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:format=p010le"
 		elif [ ! -z ${detelecine} ]; then
-			FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:${hwDL}format=${inputFormat},${detelecine}hwupload,format=p010le"
+			FILTERS="${hwDL}format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:format=p010le"
 		else
-			FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:format=p010le"
+			FILTERS="vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:format=p010le"
 	        fi
 	fi
 	echo "Video filter result: ${FILTERS}"
