@@ -15,7 +15,6 @@ CHAPSELECT=
 ANIME=0
 KOREAN=0
 CHINESE=0
-RESCALE=0
 FILTERS=""
 CHAPTERFILES=""
 FINALAUDIO=""
@@ -38,7 +37,6 @@ while getopts i:c:a:k:r:s:h:w:e:o:m: option; do
                 a) ANIME=${OPTARG};;
                 k) KOREAN=${OPTARG};;
 		m) CHINESE=${OPTARG};;
-                r) RESCALE=${OPTARG};;
 		s) CHAPSELECT=${OPTARG};;
 		h) NOHWADECODE=${OPTARG};;
 		w) SCRATCHDIR=${OPTARG};;
@@ -582,14 +580,67 @@ chapterSelect () {
         ffmpeg -v error -stats -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
 }
 
-# Generates video filters for vpp_qsv
+progressiveInInterlaced () {
+	videoToSplit=$1
+	height=$2
+	width=$3
+	frameRate=$4
+	pixFmt=$5
+
+	echo "Splitting raw video by field then rejoining"
+	ffmpeg -v error -y -stats -i "${videoToSplit}" -filter_complex "[0]il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i" -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -f rawvideo "${WIP}/rejoined.yuv" < /dev/null
+	echo "Muxing rejoined raw video with original audio, subtitles, attachments, and metadata"
+	ffmpeg -v error -y -stats -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -i "${WIP}/rejoined.yuv" -i "${videoToSplit}" -map 0:v -map 1:a -map 1:s? -map 1:t? -map_metadata 1 -map_chapters 1 -codec copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${WIP}/finalRejoinedVideo.mkv" < /dev/null
+	echo "Replacing WIP file with new file"
+	mv "${WIP}/finalRejoinedVideo.mkv" "${videoToSplit}"
+}
+
+# Generates filter based on results of probe
 generateFilters () {
+	if [ ${setSar} -eq 1 ]; then
+		sar="setsar=${sar},"
+	else
+		sar=""
+	fi
+	if [ ${deinterlace} -eq 1 ]; then
+		if [ ${hwUL} -eq 0 ] && [ ${detelecine} -eq 1]; then
+			deinterlace="yadif=0:-1:0,"
+			detelecine="pullup,"
+		elif [ ${hwUL} -eq 1 ] && [ ${detelecine} -eq 1 ]; then
+			detelecine="pullup,yadif=0:-1:0,"
+			deinterlace=""
+		elif [ ${hwUL} -eq 1 ] && [ ${detelecine} -eq 0 ]; then
+			detelecine=""
+			deinterlace="deinterlace=2:"
+		fi
+	else
+		detelecine=""
+		deinterlace=""
+	fi
+	if [ ${scale} -eq 1 ]; then
+		if [ ${hwUL} -eq 0 ]; then
+			echo "format=${inputFormat},${detelecine}${deinterlace}crop=w=${w}:h=${h}:x=${x}:y=${y},scale=w=${w_scale}:h=${h_scale},${sar}format=p010le"
+		else
+			echo "${hwDL}format=${inputFormat},${detelecine}${sar}hwupload,vpp_qsv=${deinterlace}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,scale_qsv=w=${w_scale}:h=${h_scale}:format=p010le"
+		fi
+	else
+		if [ ${hwUL} -eq 0 ]; then
+			echo "format=${inputFormat},${detelecine}${deinterlace}crop=w=${w}:h=${h}:x=${x}:y=${y},${sar}format=p010le"
+		else
+			echo "${hwDL}format=${inputFormat},${detelecine}${sar},hwupload,vpp_qsv=cw=${deinterlace}${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:format=p010le"
+		fi
+	fi
+}
+
+# Probes file and generates video filters parameters
+generateFilterParameters () {
 	# ffprobe to determine if interlaced.  If yes, set yadif deinterlace filter.
 	rawParams=$(ffprobe -v error -i "${INPUTFILE}" -select_streams v:0 -show_entries streams)
 	interlaced=$(echo ${rawParams} | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}' | head -1)
 	videoLanguageTag=$(echo ${rawParams} | grep -o '')
 	frameRateNum=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $1}' | head -1)
 	frameRateDenom=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $2}' | head -1)
+	frameRate="${frameRateNum}/${frameRateDenom}"
 	numOfFrames=$(echo -e "${rawParams}" | egrep 'NUMBER_OF_FRAMES|nb_frames' | grep -v "N\/A" | grep "=" | awk -F '=' '{print $2}' | head -1)
 	inputBitDepth=$(echo ${rawParams} | grep -o 'pix_fmt=[a-z,0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	sar=$(echo ${rawParams} | grep -o 'sample_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}' | head -1)
@@ -597,48 +648,19 @@ generateFilters () {
 	width=$(echo ${rawParams} | grep -o 'width=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	height=$(echo ${rawParams} | grep -o 'height=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	duration=$(echo ${rawParams} | grep -o 'duration=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
-	deinterlaced=""
-	detelecine=""
-	FRAMERATE=""
+	detelecine=0
+	hwUL=1
+	setSar=0
+	scale=0
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
-	        tt) deinterlaced="deinterlaced=2:";;
-	        bb) deinterlaced="deinterlaced=2:";;
-	        tb) deinterlaced="deinterlaced=2:";;
-	        bt) deinterlaced="deinterlaced=2:";;
-	        *) deinterlaced="";;
+	        tt) deinterlace=1;;
+	        bb) deinterlace=1;;
+	        tb) deinterlace=1;;
+	        bt) deinterlace=1;;
+	        *) deinterlace=0;;
 	esac
-
-	if [ ! -z ${deinterlaced} ]; then
-		echo "Detected interlaced video, checking for telecine"
-		if [ ${numOfFrames} -lt 3600 ]; then
-			readFrames=${numOfFrames}
-		else
-			readFrames=3600
-		fi
-		rawIdet=$(ffmpeg -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${remuxOutputFile}" 2>&1 | grep "frame detection" | tail -2)
-		idetProg1=$(echo $rawIdet | head -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetProg2=$(echo $rawIdet | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		progRatio1=$(awk "BEGIN {print ( ${idetProg1} / ${readFrames} ) * 100}" | bc)
-		progRatioInt1=$( printf "%.0f" ${progRatio1} )
-		progRatio2=$(awk "BEGIN {print ( ${idetProg2} / ${readFrames} ) * 100}" | bc)
-		progRatioInt2=$( printf "%.0f" ${progRatio2} )
-
-		if [ ${progRatioInt1} -ge 10 ] || [ ${progRatioInt2} -ge 10 ]; then
-			echo "Telecine detected"
-			deinterlaced=""
-			detelecine="pullup,yadif=0:-1:1,"
-			newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.8}")
-			FRAMERATE="-r ${newFrameRateNum}/${frameRateDenom}"
-		else
-			echo "Telecine was not detected"
-			FRAMERATE="-fps_mode passthrough"
-		fi
-	else
-		echo "Detected progressive video"
-		FRAMERATE="-fps_mode passthrough"
-	fi
 
 	# ffmpeg to detect black bars for cropping.
 	rawCrop1=$(ffmpeg -ss 0 -t 10 -i "${remuxOutputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
@@ -684,53 +706,98 @@ generateFilters () {
 		inputFormat="nv12"
 	fi
 
-	# Automatically or manually adjusts resolution if SAR is not 1:1.  If RESCALE=1 the SAR is set to 1:1 and
-	# the DAR is manually set to 16:9.  RESCALE=2 forces 4:3 ratio.  Else dynamically determine DAR and set SAR to 1:1.
-	if [ ${RESCALE} -eq 1 ]; then
-		echo "Manually altering dimensions for 16/9 video"
-		h_float=$(awk "BEGIN {print ${w} / 1.777777778}" | bc)
-		h_scale=$(printf "%.0f" ${h_float})
-		FILTERS="${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
-	elif [ ${RESCALE} -eq 2 ]; then
-		echo "Manually altering dimensions for 4/3 video"
-		w_float=$(awk "BEGIN {print ${h} * 1.333}" | bc)
-		w_scale=$(printf "%.0f" ${w_float})
-		FILTERS="${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
-	else
-		echo "Automatically detecting SAR/DAR"
-		if [[ "${sar}" != "1:1" ]] && [ ! -z ${sar} ]; then
-			sarRatio1=$(echo ${sar} | awk -F ':' '{print $1}')
-			sarRatio2=$(echo ${sar} | awk -F ':' '{print $2}')
-			sarRatio=$(awk "BEGIN {print ${sarRatio1} / ${sarRatio2}}")
-			darRatio1=$(echo ${dar} | awk -F ':' '{print $1}')
-			darRatio2=$(echo ${dar} | awk -F ':' '{print $2}')
-			darRatio=$(awk "BEGIN {print ${darRatio1} / ${darRatio2}}")
-			darRatioWS=$(awk "BEGIN {print 16 /9}")
-			darRatioDiff=$(awk "BEGIN {print ${darRatio} - ${darRatioWS}}")
-			darRatioDiff=${darRatioDiff#-}
-	                ratio=$(awk "BEGIN {print ${darRatio} * ${sarRatio}}")
-			ratioDiff=$(awk "BEGIN {print ${ratio} - 1.333}")
-			ratioDiff=${ratioDiff#-}
-			if [[ $(awk "BEGIN{print (${ratioDiff} < 0.2)}") -eq 1 ]]; then
-				echo "Altering dimensions to fix aspect ratio to ~4/3"
-                		w_float=$(awk "BEGIN {print ${height} * 1.333}" | bc)
-				w_scale=$(printf "%.0f" ${w_float})
-				FILTERS="${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
-			else
-				echo "Altering dimensions to fix aspect ratio, widescreen"
-				h_float=$(awk "BEGIN {print ${width} / ${ratio}}" | bc)
-				h_scale=$(printf "%.0f" ${h_float})
-				FILTERS="${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
-			fi
-		elif [ -z ${sar} ]; then
-			echo "SAR not set.  Setting to 1:1"
-			FILTERS="${hwDL}format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:format=p010le"
-		elif [ ! -z ${detelecine} ]; then
-			FILTERS="${hwDL}format=${inputFormat},${detelecine}hwupload,vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:format=p010le"
+	if [ ${deinterlace} -eq 1 ]; then
+		echo "Detected interlaced video, checking for telecine"
+		if [ ${numOfFrames} -lt 3600 ]; then
+			readFrames=${numOfFrames}
 		else
-			FILTERS="vpp_qsv=${deinterlaced}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:format=p010le"
-	        fi
+			readFrames=3600
+		fi
+		rawIdet=$(ffmpeg -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${remuxOutputFile}" 2>&1 | grep "frame detection" | tail -2)
+		idetProg1=$(echo $rawIdet | head -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetProg2=$(echo $rawIdet | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetTFF1=$(echo $rawIdet | head -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetTFF2=$(echo $rawIdet | tail -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetBFF1=$(echo $rawIdet | head -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetBFF2=$(echo $rawIdet | tail -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetUndet1=$(echo $rawIdet | head -1 | grep -o 'Undetermined: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetUndet2=$(echo $rawIdet | tail -1 | grep -o 'Undetermined: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		progRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetProg1} / ${readFrames} ) * 100}"`)
+		progRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetProg2} / ${readFrames} ) * 100}"`)
+		TFFRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetTFF1} / ${readFrames} ) * 100}"`)
+		TFFRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetTFF2} / ${readFrames} ) * 100}"`)
+		BFFRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetBFF1} / ${readFrames} ) * 100}"`)
+		BFFRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetBFF2} / ${readFrames} ) * 100}"`)
+		unDetRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetUndet1} / ${readFrames} ) * 100}"`)
+		unDetRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetUndet2} / ${readFrames} ) * 100}"`)
+
+		if [ ${progRatio1} -ge 10 ] || [ ${progRatio2} -ge 10 ]; then
+			if [ ${TFFRatio1} -ge 50 ] || [ ${TFFRatio2} -ge 50 ] || [ ${BFFRatio1} -ge 50 ] || [ ${BFFRatio2} -ge 50 ] || [ ${unDetRatio1} -ge 50 ] || [ ${unDetRatio1} -ge 50 ]; then
+				echo "Telecine detected"
+				detelecine=1
+				frameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.8}")
+				FRAMERATE="-r ${frameRateNum}/${frameRateDenom}"
+			elif [ ${progRatio1} -ge 50 ] || [ ${progRatio2} -ge 50 ]; then
+				echo "Progressive video with interlaced encoding detected"
+				progressiveInInterlaced "${remuxOutputFile}" "${height}" "${width}" "${frameRate}" "${inputBitDepth}"
+				FRAMERATE="-fps_mode passthrough"
+				hwUL=0
+				decodeAccel=""
+				deinterlace="0"
+			else
+				echo "Telecine was not detected"
+				FRAMERATE="-fps_mode passthrough"
+			fi
+		fi
+	else
+		echo "Detected progressive video"
+		FRAMERATE="-fps_mode passthrough"
 	fi
+
+	# If SAR is not 1:1, will set to 1:1 and dynamically scale the video accordingly.
+	echo "Automatically detecting SAR/DAR"
+	if [[ "${sar}" != "1:1" ]] && [ ! -z ${sar} ]; then
+		setSar=1
+		sar="1:1"
+		sarNum=$(echo ${sar} | awk -F ':' '{print $1}')
+		sarDenom=$(echo ${sar} | awk -F ':' '{print $2}')
+		sarRatio=$(awk "BEGIN {print ${sarNum} / ${sarDenom}}")
+		darNum=$(echo ${dar} | awk -F ':' '{print $1}')
+		darDenom=$(echo ${dar} | awk -F ':' '{print $2}')
+		darRatio=$(awk "BEGIN {print ${darNum} / ${darDenom}}")
+		darRatioWS=$(awk "BEGIN {print 16 /9}")
+		darRatioDiff=$(awk "BEGIN {print ${darRatio} - ${darRatioWS}}")
+		darRatioDiff=${darRatioDiff#-}
+		ratio=$(awk "BEGIN {print ${darRatio} * ${sarRatio}}")
+		ratioDiff=$(awk "BEGIN {print ${ratio} - 1.333}")
+		ratioDiff=${ratioDiff#-}
+		if [[ $(awk "BEGIN{print (${ratioDiff} < 0.2)}") -eq 1 ]]; then
+			echo "Altering dimensions to fix aspect ratio to ~4/3"
+			scale=1
+			h_scale=${h}
+               		w_scale=$(printf "%.0f" `awk "BEGIN {print ${height} * 1.333}"`)
+		# Edge case.  Sometimes DAR is set to 16:9 and dynamically calculating via SAR/DAR results in extra wide, stretched, video.
+		elif [[ $(awk "BEGIN{print (${ratioDiff} > 0.2)}") -eq 1 ]] && [[ $(awk "BEGIN{print (${darRatioDiff} < 0.05)}") -eq 1 ]]; then
+			echo "Altering dimension to fix aspect ratio to ~16/9"
+			scale=1
+			w_scale=${w}
+	                h_scale=$(printf "%.0f" `awk "BEGIN {print ${width} / 1.777777778}"`)
+		else
+			echo "Altering dimensions to fix aspect ratio, widescreen"
+			scale=1
+			w_scale=${w}
+			h_scale=$(printf "%.0f" `awk "BEGIN {print ${width} / ${ratio}}"`)
+		fi
+	elif [ -z ${sar} ]; then
+		echo "SAR not set.  Setting to 1:1"
+		setSar=1
+		sar="1:1"
+		w_scale=${w}
+		h_scale=${h}
+	fi
+
+	FILTERS=$(generateFilters)
+
 	echo "Video filter result: ${FILTERS}"
 
 }
@@ -1020,7 +1087,7 @@ elif [ ${AUDIOCONVERSION} -eq 1 ] || [ "${AV1PROBE}" != "[]" ]; then
 	audioConversionOnly
 else
 	echo "Generating video filter parameters"
-	generateFilters
+	generateFilterParameters
 	av1Encode
 fi
 
