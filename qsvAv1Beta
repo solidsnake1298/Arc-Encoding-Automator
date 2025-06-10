@@ -603,14 +603,21 @@ generateFilters () {
 		sar=""
 	fi
 	if [ ${setDetelecine} -eq 1 ]; then
-		detelecine="pullup,dejudder,fps=${frameRate},fieldmatch,"
+		detelecine="dejudder,fps=${frameRate},fieldmatch=mode=pc_n_ub:combmatch=full:combpel=70,"
 	else
 		detelecine=""
 	fi
 	if [ ${setDeinterlace} -eq 1 ]; then
-		deinterlace="rate=1:deinterlace=2:"
+		if [ ${setSWDeinterlace} -eq 1 ]; then
+			hwDeinterlace=""
+			swDeinterlace="yadif=deint=interlaced,decimate,"
+		else
+			hwDeinterlace="rate=1:deinterlace=2:"
+			swDeinterlace=""
+		fi
 	else
-		deinterlace=""
+		hwDeinterlace=""
+		swDeinterlace=""
 	fi
 	if [ ${setScale} -eq 1 ]; then
 		scale="scale_qsv=w=${w_scale}:h=${h_scale}:format=p010le"
@@ -627,7 +634,12 @@ generateFilters () {
 	else
 		hwUL=""
 	fi
-	echo "${hwDL}${detelecine}${sar}${hwUL}vpp_qsv=${deinterlace}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${scale}"
+	if [ ${setHWFramerate} -eq 1 ]; then
+		newFrameRate="framerate=${newFrameRate}:"
+	else
+		newFrameRate=""
+	fi
+	echo "${hwDL}${detelecine}${swDeinterlace}${sar}${hwUL}vpp_qsv=${hwDeinterlace}${newFrameRate}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${scale}"
 }
 
 # Probes file and generates video filters parameters
@@ -647,9 +659,11 @@ generateFilterParameters () {
 	height=$(echo ${rawParams} | grep -o 'height=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	duration=$(echo ${rawParams} | grep -o 'duration=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	setDetelecine=0
+	setSWDeinterlace=0
 	setHWUL=0
 	setSar=0
 	setScale=0
+	setHWFramerate=0
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
@@ -737,9 +751,11 @@ generateFilterParameters () {
 		repeatRatioTop=$(printf "%.0f" `awk "BEGIN {print ( ${idetRepeat2} / ${readFrames} ) * 100}"`)
 		repeatRatioBottom=$(printf "%.0f" `awk "BEGIN {print ( ${idetRepeat3} / ${readFrames} ) * 100}"`)
 		IFS=$'\n'
-		TFFSort=(${TFFRatio1} ${TFFRatio2} ${TFFRatio3})
-		BFFSort=(${BFFRatio1} ${BFFRatio2} ${BFFRatio3})
-		unDetSort=(${unDetRatio1} ${unDetRatio2} ${unDetRatio3})
+		progSort=(${progRatio1} ${progRatio2})
+		TFFSort=(${TFFRatio1} ${TFFRatio2})
+		BFFSort=(${BFFRatio1} ${BFFRatio2})
+		unDetSort=(${unDetRatio1} ${unDetRatio2})
+		largestProg=$(echo "${progSort[*]}" | sort -nr | head -n1)
 		largestTFF=$(echo "${TFFSort[*]}" | sort -nr | head -n1)
 		largestBFF=$(echo "${BFFSort[*]}" | sort -nr | head -n1)
 		largestUnDet=$(echo "${unDetSort[*]}" | sort -nr | head -n1)
@@ -748,31 +764,38 @@ generateFilterParameters () {
 		TFFRatio=$(awk "BEGIN { print ( ${largestTFF} + ${largestUnDet} )}")
 		BFFRatio=$(awk "BEGIN { print ( ${largestBFF} + ${largestUnDet} )}")
 
-		if [ ${progRatio1} -ge 10 ] || [ ${progRatio2} -ge 10 ]; then
-			if [[ ( ${TFFRatio} -ge 50 || ${BFFRatio} -ge 50 ) && ${repeatRatioSum} -le ${repeatRatioNeither} ]]; then
+		if [ ${largestProg} -ge 10 ]; then
+                        if [ ${largestProg} -ge 50 ]  && [ ${repeatRatioNeither} -ge 90 ]; then
+                                echo "Progressive video with interlaced encoding detected"
+                                progressiveInInterlaced "${remuxOutputFile}" "${height}" "${width}" "${frameRate}" "${inputBitDepth}"
+                                FRAMERATE="-fps_mode passthrough"
+                                decodeAccel=""
+                                setHWDL=0
+                                setHWUL=1
+                                setDeinterlace="0"
+			elif [[ ( ${TFFRatio} -ge 50 || ${BFFRatio} -ge 50 ) && ${repeatRatioSum} -le ${repeatRatioNeither} ]]; then
 				echo "Telecine detected, likely 24fps in 30fps"
 				setDetelecine=1
+				setSWDeinterlace=1
 				setHWUL=1
+				setHWFramerate=1
 				newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.8}")
-				FRAMERATE="-r ${newFrameRateNum}/${frameRateDenom}"
+				newFrameRate="${newFrameRateNum}/${frameRateDenom}"
+				FRAMERATE=""
 			elif [[ ( ${TFFRatio} -ge 20 || ${BFFRatio} -ge 20 ) && ${repeatRatioSum} -ge ${repeatRatioNeither} ]]; then
                                 echo "Telecine detected, likely 24fps in 60fps"
                                 setDetelecine=1
+				setSWDeinterlace=1
                                 setHWUL=1
+				setHWFramerate=1
                                 newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.4}")
-                                FRAMERATE="-r ${newFrameRateNum}/${frameRateDenom}"
-			elif [ ${progRatio1} -ge 50 ] || [ ${progRatio2} -ge 50 ]; then
-				echo "Progressive video with interlaced encoding detected"
-				progressiveInInterlaced "${remuxOutputFile}" "${height}" "${width}" "${frameRate}" "${inputBitDepth}"
-				FRAMERATE="-fps_mode passthrough"
-				decodeAccel=""
-				setHWDL=0
-				setHWUL=1
-				setDeinterlace="0"
-			else
-				echo "Telecine was not detected"
-				FRAMERATE="-fps_mode passthrough"
+				newFrameRate="${newFrameRateNum}/${frameRateDenom}"
+                                FRAMERATE=""
 			fi
+		else
+			echo "Telecine was not detected"
+			FRAMERATE="-fps_mode passthrough"
+
 		fi
 	else
 		echo "Detected progressive video"
