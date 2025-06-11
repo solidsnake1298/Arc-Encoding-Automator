@@ -15,7 +15,6 @@ CHAPSELECT=
 ANIME=0
 KOREAN=0
 CHINESE=0
-RESCALE=0
 FILTERS=""
 CHAPTERFILES=""
 FINALAUDIO=""
@@ -28,6 +27,8 @@ SCRATCHDIR=""
 ENGLISHSELECTION=0
 AUDIOCONVERSION=0
 EMPTYCHAPTERPROBE=""
+FRAMERATE=""
+EXITCODE=0
 
 # Reads input paramamters
 while getopts i:c:a:k:r:s:h:w:e:o:m: option; do
@@ -37,7 +38,6 @@ while getopts i:c:a:k:r:s:h:w:e:o:m: option; do
                 a) ANIME=${OPTARG};;
                 k) KOREAN=${OPTARG};;
 		m) CHINESE=${OPTARG};;
-                r) RESCALE=${OPTARG};;
 		s) CHAPSELECT=${OPTARG};;
 		h) NOHWADECODE=${OPTARG};;
 		w) SCRATCHDIR=${OPTARG};;
@@ -61,6 +61,21 @@ fi
 WIP=${SCRATCHDIR}/WIP
 mkdir -p ${WIP}
 
+checkExitCode () {
+	function=$1
+	if [ $EXITCODE -eq -1 ]; then
+		echo "Encode completed successfully."
+		# WIP cleanup
+		echo "Cleaning up WIP files/folders"
+		rm -f "${remuxOutputFile}"
+		rm -rf ${WIP}
+		exit 0
+	elif [ $EXITCODE -ne 0 ]; then
+		echo "FFmpeg returned a non-zero exit code in ${function}.  Leaving WIP files in place and quitting."
+		exit 1
+	fi
+}
+
 # Uses Intel QSV to encode the original AV1.  Maps the audio tracks for the selected languages, and converts to them to OPUS.
 # Includes attachments if present.  If splitting out episodes from a MKV that came off the disc as a single file, it will loop through for each episode.
 # If using jellyfin-ffmpeg7.0.2-4 and newer, DV 7.6 and 8 will automatically be stripped.
@@ -68,7 +83,7 @@ av1Encode () {
 	local audioCommand=$(audioMapping)
 	local subCommand=$(subMapping)
 
-echo -e "${CHAPTERFILES}" | while read file; do
+while read file; do
 	echo "Converting to AV1 ${INPUTFILE}"
 	inputFile="${file}"
         if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
@@ -94,16 +109,16 @@ echo -e "${CHAPTERFILES}" | while read file; do
                 -hwaccel_output_format qsv \
 		-extra_hw_frames 40 \
                 -i "${inputFile}" \
-                -map_chapters 0 \
 		-map 0:v:0 \
                 -c:v av1_qsv \
                 -q:v 22 \
-                -look_ahead_depth 40 \
                 -preset veryslow \
-                -vf vpp_qsv="${FILTERS}" \
+                -look_ahead_depth 40 \
+                -vf "${FILTERS}" \
+                -map_chapters 0 \
 		${audioCommand} \
 		${subCommand} \
-		-fps_mode passthrough \
+		${FRAMERATE} \
 		-disposition:s 0 \
 		-low_delay_brc 1 \
 		-extbrc 1 \
@@ -115,7 +130,25 @@ echo -e "${CHAPTERFILES}" | while read file; do
 		-max_interleave_delta 0 \
 		-avoid_negative_ts disabled \
                 "${outputFile}" < /dev/null
-done
+	EXITCODE=$?
+	checkExitCode "av1Encode"
+done <<< "${CHAPTERFILES}"
+
+# Rechecks chapters, but only if present in input file
+# Duration can shift slightly during encoding, which causes the last chapter
+# to, potentially, end after the duration.
+if [ ${BADCHAPTER} -ne 0 ]; then
+        echo "Rechecking output file chapters"
+        BADCHAPTER=$(checkChapters "${outputFile}")
+        if [ ${BADCHAPTER} -gt 1 ]; then
+                newOutputFile=$(echo ${outputFile} | sed 's/.mkv/-chapterFix.mkv/g')
+                echo "Output file has bad chapters.  Duration can change slightly during encoding, triggering this issue."
+                repairChapters "${outputFile}" "${newOutputFile}"
+                mv "${newOutputFile}" "${outputFile}"
+        else
+                echo "All chapters valid in output file"
+        fi
+fi
 }
 
 # Only remuxes tracks with selected languages
@@ -123,7 +156,7 @@ remuxOnly () {
         local audioCommand=$(audioMapping)
         local subCommand=$(subMapping)
                 
-echo -e "${CHAPTERFILES}" | while read file; do
+while read file; do
 	echo "Remuxing ${INPUTFILE}"
         inputFile="${file}"
         if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
@@ -153,14 +186,32 @@ echo -e "${CHAPTERFILES}" | while read file; do
                 -max_interleave_delta 0 \
                 -avoid_negative_ts disabled \
                 "${outputFile}" < /dev/null
-done
+        EXITCODE=$?
+	checkExitCode "remuxOnly"
+done <<< "${CHAPTERFILES}"
+
+# Rechecks chapters, but only if present in input file
+# Duration can shift slightly during encoding, which causes the last chapter
+# to, potentially, end after the duration.
+if [ ${BADCHAPTER} -ne 0 ]; then
+        echo "Rechecking output file chapters"
+        BADCHAPTER=$(checkChapters "${outputFile}")
+        if [ ${BADCHAPTER} -gt 1 ]; then
+                newOutputFile=$(echo ${outputFile} | sed 's/.mkv/-chapterFix.mkv/g')
+                echo "Output file has bad chapters.  Duration can change slightly during encoding, triggering this issue."
+                repairChapters "${outputFile}" "${newOutputFile}"
+                mv "${newOutputFile}" "${outputFile}"
+        else
+                echo "All chapters valid in output file"
+        fi
+fi
 }
 
 audioConversionOnly () {
         local audioCommand=$(audioMapping)
         local subCommand=$(subMapping)
                 
-echo -e "${CHAPTERFILES}" | while read file; do
+while read file; do
 	echo "Converting audio only for ${INPUTFILE}"
         inputFile="${file}"
         if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
@@ -190,7 +241,25 @@ echo -e "${CHAPTERFILES}" | while read file; do
                 -max_interleave_delta 0 \
                 -avoid_negative_ts disabled \
                 "${outputFile}" < /dev/null
-done
+        EXITCODE=$?
+	checkExitCode "audioConversionOnly"
+done <<< "${CHAPTERFILES}"
+
+# Rechecks chapters, but only if present in input file
+# Duration can shift slightly during encoding, which causes the last chapter
+# to, potentially, end after the duration.
+if [ ${BADCHAPTER} -ne 0 ]; then
+        echo "Rechecking output file chapters"
+        BADCHAPTER=$(checkChapters "${outputFile}")
+        if [ ${BADCHAPTER} -gt 1 ]; then
+                newOutputFile=$(echo ${outputFile} | sed 's/.mkv/-chapterFix.mkv/g')
+                echo "Output file has bad chapters.  Duration can change slightly during encoding, triggering this issue."
+                repairChapters "${outputFile}" "${newOutputFile}"
+                mv "${newOutputFile}" "${outputFile}"
+        else
+                echo "All chapters valid in output file"
+        fi
+fi
 }
 
 # Selects English and Japanese audio tracks for processing.  If lossless tracks are present for a language, lossy tracks for that language are ignored.
@@ -497,7 +566,8 @@ splitEpisodes () {
 		echo "Writing file for chapters ${first} thru ${last}"
 
 		ffmpeg -v error -stats -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
-
+		EXITCODE=$?
+		checkExitCode "splitEpisodes $first $last"
 	        i=$(echo $((${i} + ${CHAPTERSEPISODE})) | bc)
 	done
 	CHAPTERFILES=$(ls ${WIP})
@@ -531,35 +601,110 @@ chapterSelect () {
 	echo "Writing file for chapters ${startChapter} thru ${endChapter}"
                 
         ffmpeg -v error -stats -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
+	EXITCODE=$?
+	checkExitCode "ChapterSelect $startChapter $endChapter"
 }
 
-# Generates video filters for vpp_qsv
+progressiveInInterlaced () {
+	videoToSplit=$1
+	height=$2
+	width=$3
+	frameRate=$4
+	pixFmt=$5
+
+	echo "Splitting raw video by field then rejoining"
+	ffmpeg -v error -y -stats -i "${videoToSplit}" -filter_complex "[0]il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i" -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -f rawvideo "${WIP}/rejoined.yuv" < /dev/null
+        EXITCODE=$?
+        checkExitCode "progressiveInInterlaced"
+	echo "Muxing rejoined raw video with original audio, subtitles, attachments, and metadata"
+	ffmpeg -v error -y -stats -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -i "${WIP}/rejoined.yuv" -i "${videoToSplit}" -map 0:v -map 1:a -map 1:s? -map 1:t? -map_metadata 1 -map_chapters 1 -codec copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${WIP}/finalRejoinedVideo.mkv" < /dev/null
+        EXITCODE=$?
+        checkExitCode "progressiveInInterlaced"
+	echo "Replacing WIP file with new file"
+	mv "${WIP}/finalRejoinedVideo.mkv" "${videoToSplit}"
+}
+
+# Generates filter based on results of probe
 generateFilters () {
-	# ffprobe to determine if interlaced.  If yes, set yadif deinterlace filter.
-	rawParams=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams v:0 -show_entries stream=width,height,field_order,pix_fmt,sample_aspect_ratio,duration,display_aspect_ratio)
+	if [ ${setSar} -eq 1 ]; then 
+		sar="setsar=1:1,"
+	else 
+		sar=""
+	fi
+	if [ ${setHWDL} -eq 1 ]; then
+		hwDownload="hwdownload,"
+		inFormat="format=${inputFormat},"
+	else
+		hwDownload=""
+	fi
+	if [ ${setHWUL} -eq 1 ]; then
+		hwUpload="hwupload,"
+	else
+		hwUpload=""
+	fi
+	if [ ${setInFormat} -eq 1 ]; then
+		inFormat="format=${inputFormat},"
+	else
+		inFormat=""
+	fi
+	if [ ${setDetelecine} -eq 1 ]; then 
+		detelecine="crop=w=${w}:h=${h}:x=${x}:y=${y},pullup,dejudder,fps=${frameRate},"
+	else
+		detelecine="crop=w=${w}:h=${h}:x=${x}:y=${y},"
+	fi   
+	if [ ${setDeinterlace} -eq 1 ]; then 
+		deinterlace="vpp_qsv=rate=1:deinterlace=2:scale_mode=5"
+	else 
+		deinterlace=""
+	fi   
+	if [ ${setFramerate} -eq 1 ]; then 
+		newFrameRate=":framerate=${newFrameRate}"
+	else 
+		newFrameRate=""
+	fi
+	if [ ${setScale} -eq 1 ]; then 
+		scale="scale_qsv=w=${w_scale}:h=${h_scale}:mode=hq:format=p010le"
+	else
+		scale="format=p010le"
+	fi
+	if [ ${setDetelecine} -eq 0 ] && [ ${setDeinterlace} -eq 0 ]; then
+		echo "${inFormat}${hwUpload}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y},${sar}${scale}"
+	else
+		echo "${hwDownload}${inFormat}${detelecine}${hwUpload}${deinterlace}${newFrameRate},${sar}${scale}"
+	fi
+}
+
+# Probes file and generates video filters parameters
+generateFilterParameters () {
+	# ffprobe to determine if interlaced.  If yes, set bwdif deinterlace filter.
+	rawParams=$(ffprobe -v error -i "${INPUTFILE}" -select_streams v:0 -show_entries streams)
 	interlaced=$(echo ${rawParams} | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}' | head -1)
+	videoLanguageTag=$(echo ${rawParams} | grep -o '')
+	frameRateNum=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $1}' | head -1)
+	frameRateDenom=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $2}' | head -1)
+	frameRate="${frameRateNum}/${frameRateDenom}"
+	numOfFrames=$(echo -e "${rawParams}" | egrep 'NUMBER_OF_FRAMES|nb_frames' | grep -v "N\/A" | grep "=" | awk -F '=' '{print $2}' | head -1)
 	inputBitDepth=$(echo ${rawParams} | grep -o 'pix_fmt=[a-z,0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	sar=$(echo ${rawParams} | grep -o 'sample_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	dar=$(echo ${rawParams} | grep -o 'display_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	width=$(echo ${rawParams} | grep -o 'width=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	height=$(echo ${rawParams} | grep -o 'height=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	duration=$(echo ${rawParams} | grep -o 'duration=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
-	deinterlaced=""
+	setDetelecine=0
+	setSar=0
+	setScale=0
+	setFramerate=0
+	setHWUL=0
+	setInFormat=0
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
-	        tt) deinterlaced="2";;
-	        bb) deinterlaced="2";;
-	        tb) deinterlaced="2";;
-	        bt) deinterlaced="2";;
-	        *) deinterlaced="0";;
+	        tt) setDeinterlace=1;;
+	        bb) setDeinterlace=1;;
+	        tb) setDeinterlace=1;;
+	        bt) setDeinterlace=1;;
+	        *) setDeinterlace=0;;
 	esac
-
-	if [ ${deinterlaced} -eq 2 ]; then
-		echo "Detected interlaced video"
-	else
-		echo "Detected progressive video"
-	fi
 
 	# ffmpeg to detect black bars for cropping.
 	rawCrop1=$(ffmpeg -ss 0 -t 10 -i "${remuxOutputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
@@ -605,48 +750,129 @@ generateFilters () {
 		inputFormat="nv12"
 	fi
 
-	
-	# in the ratio equaling 16:9.  RESCALE=2 forces 4:3 ratio.  Else dynamically determine DAR and set SAR to 1:1.
-	if [ ${RESCALE} -eq 1 ]; then
-		echo "Manually altering dimensions for 16/9 video"
-		h_float=$(awk "BEGIN {print ${w} / 1.777777778}" | bc)
-		h_scale=$(printf "%.0f" ${h_float})
-		FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
-	elif [ ${RESCALE} -eq 2 ]; then
-		echo "Manually altering dimensions for 4/3 video"
-		w_float=$(awk "BEGIN {print ${h} * 1.333}" | bc)
-		w_scale=$(printf "%.0f" ${w_float})
-		FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
-	else
-		echo "Automatically detecting SAR/DAR"
-		if [[ "${sar}" != "1:1" ]] && [ ! -z ${sar} ]; then
-			sarRatio1=$(echo ${sar} | awk -F ':' '{print $1}')
-			sarRatio2=$(echo ${sar} | awk -F ':' '{print $2}')
-			sarRatio=$(awk "BEGIN {print ${sarRatio1} / ${sarRatio2}}")
-			darRatio1=$(echo ${dar} | awk -F ':' '{print $1}')
-			darRatio2=$(echo ${dar} | awk -F ':' '{print $2}')
-			darRatio=$(awk "BEGIN {print ${darRatio1} / ${darRatio2}}")
-	                ratio=$(awk "BEGIN {print ${darRatio} * ${sarRatio}}")
-			ratioDiff=$(awk "BEGIN {print ${ratio} - 1.333}")
-			ratioDiff=${ratioDiff#-}
-			if [[ $(awk "BEGIN{print (${ratioDiff} < 0.2)}") -eq 1 ]]; then
-				echo "Altering dimensions to fix aspect ratio to ~4/3"
-                		w_float=$(awk "BEGIN {print ${h} * 1.333}" | bc)
-				w_scale=$(printf "%.0f" ${w_float})
-				FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w_scale}:h=${h}:format=p010le"
-			else
-				echo "Altering dimensions to fix aspect ratio, widescreen"
-				h_float=$(awk "BEGIN {print ${w} / ${ratio}}" | bc)
-				h_scale=$(printf "%.0f" ${h_float})
-				FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w}:h=${h_scale}:format=p010le"
-			fi
-		elif [ -z ${sar} ]; then
-			echo "SAR not set.  Setting to 1:1"
-			FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${hwDL}format=${inputFormat},setsar=1:1,format=${inputFormat},hwupload,scale_qsv=w=${w}:h=${h}:format=p010le"
+        # If SAR is not 1:1, will set to 1:1 and dynamically scale the video accordingly.
+        echo "Automatically detecting SAR/DAR"
+        if [[ "${sar}" != "1:1" ]] && [ ! -z ${sar} ]; then
+                setSar=1
+                sarNum=$(echo ${sar} | awk -F ':' '{print $1}')
+                sarDenom=$(echo ${sar} | awk -F ':' '{print $2}')
+                sarRatio=$(awk "BEGIN {print ${sarNum} / ${sarDenom}}")
+                darNum=$(echo ${dar} | awk -F ':' '{print $1}')
+                darDenom=$(echo ${dar} | awk -F ':' '{print $2}')
+                darRatio=$(awk "BEGIN {print ${darNum} / ${darDenom}}")
+                darRatioWS=$(awk "BEGIN {print 16 /9}")
+                darRatioDiff=$(awk "BEGIN {print ${darRatio} - ${darRatioWS}}")
+                darRatioDiff=${darRatioDiff#-}
+                ratio=$(awk "BEGIN {print ${darRatio} * ${sarRatio}}")
+                ratioDiff=$(awk "BEGIN {print ${ratio} - 1.333}")
+                ratioDiff=${ratioDiff#-}
+                if [[ $(awk "BEGIN{print (${ratioDiff} < 0.2)}") -eq 1 ]]; then
+                        echo "Altering dimensions to fix aspect ratio to ~4/3"
+                        setScale=1
+                        h_scale=${h}
+                        w_scale=$(printf "%.0f" `awk "BEGIN {print ${height} * 1.333}"`)
+                # Edge case.  Sometimes DAR is set to 16:9 and dynamically calculating via SAR/DAR results in extra wide, stretched, video.
+                elif [[ $(awk "BEGIN{print (${ratioDiff} > 0.2)}") -eq 1 ]] && [[ $(awk "BEGIN{print (${darRatioDiff} < 0.05)}") -eq 1 ]]; then
+                        echo "Altering dimension to fix aspect ratio to ~16/9"
+                        setScale=1
+                        w_scale=${w}
+                        h_scale=$(printf "%.0f" `awk "BEGIN {print ${width} / 1.777777778}"`)
+                else
+                        echo "Altering dimensions to fix aspect ratio, widescreen"
+                        setScale=1
+                        w_scale=${w}
+                        h_scale=$(printf "%.0f" `awk "BEGIN {print ${width} / ${ratio}}"`)
+                fi
+        elif [ -z ${sar} ]; then
+                echo "SAR not set.  Setting to 1:1"
+                setSar=1
+                w_scale=${w}
+                h_scale=${h}
+        fi
+
+	if [ ${setDeinterlace} -eq 1 ]; then
+		setHWUL=1
+		setInFormat=1
+		echo "Detected interlaced video, checking for telecine"
+		if [ "${numOfFrames}" == "" ]; then
+			readFrames=3600
+		elif [ ${numOfFrames} -lt 3600 ]; then
+			readFrames=${numOfFrames}
 		else
-			FILTERS="deinterlace=${deinterlaced}:cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4:format=p010le"
-	        fi
+			readFrames=3600
+		fi
+		rawIdet=$(ffmpeg -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${remuxOutputFile}" 2>&1 | egrep "Repeated Fields|frame detection" | tail -3)
+		idetProg1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetProg2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetTFF1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetTFF2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetBFF1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetBFF2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetUndet1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'Undetermined: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetUndet2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'Undetermined: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetRepeat1=$(echo $rawIdet | grep "Repeated Fields" | tail -1 | grep -o 'Neither: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetRepeat2=$(echo $rawIdet | grep "Repeated Fields" | tail -1 | grep -o 'Top: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		idetRepeat3=$(echo $rawIdet | grep "Repeated Fields" | tail -1 | grep -o 'Bottom: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+		progRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetProg1} / ${readFrames} ) * 100}"`)
+		progRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetProg2} / ${readFrames} ) * 100}"`)
+		TFFRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetTFF1} / ${readFrames} ) * 100}"`)
+		TFFRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetTFF2} / ${readFrames} ) * 100}"`)
+		BFFRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetBFF1} / ${readFrames} ) * 100}"`)
+		BFFRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetBFF2} / ${readFrames} ) * 100}"`)
+		unDetRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetUndet1} / ${readFrames} ) * 100}"`)
+		unDetRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetUndet2} / ${readFrames} ) * 100}"`)
+		repeatRatioNeither=$(printf "%.0f" `awk "BEGIN {print ( ${idetRepeat1} / ${readFrames} ) * 100}"`)
+		repeatRatioTop=$(printf "%.0f" `awk "BEGIN {print ( ${idetRepeat2} / ${readFrames} ) * 100}"`)
+		repeatRatioBottom=$(printf "%.0f" `awk "BEGIN {print ( ${idetRepeat3} / ${readFrames} ) * 100}"`)
+		IFS=$'\n'
+		progSort=(${progRatio1} ${progRatio2})
+		TFFSort=(${TFFRatio1} ${TFFRatio2})
+		BFFSort=(${BFFRatio1} ${BFFRatio2})
+		unDetSort=(${unDetRatio1} ${unDetRatio2})
+		largestProg=$(echo "${progSort[*]}" | sort -nr | head -n1)
+		largestTFF=$(echo "${TFFSort[*]}" | sort -nr | head -n1)
+		largestBFF=$(echo "${BFFSort[*]}" | sort -nr | head -n1)
+		largestUnDet=$(echo "${unDetSort[*]}" | sort -nr | head -n1)
+		IFS=$' \t\n'
+		repeatRatioSum=$(awk "BEGIN { print ( ${repeatRatioTop} + ${repeatRatioBottom} )}")
+		TFFRatio=$(awk "BEGIN { print ( ${largestTFF} + ${largestUnDet} )}")
+		BFFRatio=$(awk "BEGIN { print ( ${largestBFF} + ${largestUnDet} )}")
+
+		if [ ${largestProg} -ge 10 ]; then
+                        if [ ${largestProg} -ge 50 ]  && [ ${repeatRatioNeither} -ge 90 ]; then
+                                echo "Progressive video with interlaced encoding detected"
+                                progressiveInInterlaced "${remuxOutputFile}" "${height}" "${width}" "${frameRate}" "${inputBitDepth}"
+                                FRAMERATE="-fps_mode passthrough"
+				setHWDL=0
+                                decodeAccel=""
+                                setDeinterlace="0"
+			elif [[ ( ${TFFRatio} -ge 50 || ${BFFRatio} -ge 50 ) && ${repeatRatioSum} -le ${repeatRatioNeither} ]]; then
+				echo "Telecine detected, likely 24fps in 30fps"
+				setDetelecine=1
+				setFramerate=1
+				newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.8}")
+				newFrameRate="${newFrameRateNum}/${frameRateDenom}"
+				FRAMERATE=""
+			elif [[ ( ${TFFRatio} -ge 20 || ${BFFRatio} -ge 20 ) && ${repeatRatioSum} -ge ${repeatRatioNeither} ]]; then
+                                echo "Telecine detected, likely 24fps in 60fps"
+                                setDetelecine=1
+				setFramerate=1
+                                newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.4}")
+				newFrameRate="${newFrameRateNum}/${frameRateDenom}"
+                                FRAMERATE=""
+			fi
+		else
+			echo "Telecine was not detected"
+			FRAMERATE="-fps_mode passthrough"
+
+		fi
+	else
+		echo "Detected progressive video"
+		FRAMERATE="-fps_mode passthrough"
 	fi
+
+	FILTERS=$(generateFilters)
+
 	echo "Video filter result: ${FILTERS}"
 
 }
@@ -658,7 +884,9 @@ convertEIA608 () {
 	mapEIATracks=$(for index in ${eiaTracks}; do
 		echo "-map 0:${index}"
 	done)
-	ffmpeg -v error -stats -y -i "${INPUTFILE}" -vn -an ${mapEIATracks} -c:s srt "${WIP}/${srtMKVFile}"
+	ffmpeg -v error -stats -y -i "${INPUTFILE}" -vn -an ${mapEIATracks} -c:s srt "${WIP}/${srtMKVFile}" < /dev/null
+        EXITCODE=$?
+        echo "$EXITCODE"
 	mapSubTracks=$(if [ -z ${otherSubTracks} ]; then
 			echo "-map 1:s"
 		else
@@ -668,54 +896,122 @@ convertEIA608 () {
 			echo "-map 1:s"
 		fi)
 	ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -i "${WIP}/${srtMKVFile}" -codec copy -map_chapters 0 -map 0:v -map 0:a? ${mapSubTracks} -map 0:t? "${remuxOutputFile}" < /dev/null
+        EXITCODE=$?
+        echo "$EXITCODE"
 	rm -f "${WIP}/${srtMKVFile}"
 }
 
 # Checks if end time for last chapter is after the video's duration
 checkChapters () {
-	LENGTH=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
-	LASTCHAPTEREND=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	LASTCHAPTERSTART=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | grep start_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	CHAPTERCOUNT=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | jq -r ' .[].[].id' | wc -l)
+	inputFileCheck=$1
+	LENGTH=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
+	LASTCHAPTEREND=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	LASTCHAPTERSTART=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | grep start_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	CHAPTERCOUNT=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | jq -r ' .[].[].id' | wc -l)
 	SECONDLASTCHAPTERENDINDEX=$(awk "BEGIN {print ${CHAPTERCOUNT} - 1}" | bc)
-	SECONDLASTCHAPTEREND=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | jq -r --arg l ${SECONDLASTCHAPTERENDINDEX} '[.chapters[]].[$l|fromjson]' | grep end_time | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	SECONDLASTCHAPTEREND=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | jq -r --arg l ${SECONDLASTCHAPTERENDINDEX} '[.chapters[]].[$l|fromjson]' | grep end_time | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
 
-	LENGTH=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
+	LENGTH=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
 
 	if [ -z ${LASTCHAPTEREND} ]; then
 	        echo "${INPUTFILE} - No chapters present" > /dev/tty
 		echo "0"
 	elif [ ${LASTCHAPTEREND} -gt ${LENGTH} ]; then
 	        echo "Fixing bad last chapter for ${INPUTFILE}" > /dev/tty
-		echo "1"
+		echo "2"
 	elif [ ! -z ${LASTCHAPTEREND} ] && [ ${SECONDLASTCHAPTEREND} -eq ${LASTCHAPTERSTART} ] && [ ${SECONDLASTCHAPTEREND} -eq ${LASTCHAPTEREND} ]; then
         	echo "${INPUTFILE} - Last chapter has no length.  Removing..." > /dev/tty
-		echo "2"
+		echo "3"
 	else
 	        echo "${INPUTFILE} - All chapters valid" > /dev/tty
-		echo "0"
+		echo "1"
 	fi
 }
 
 repairChapters () {
+	inputFileRepair=$1
+	outputFileRepair=$2
 	CHAPTERS=${WIP}/chapters.txt
 	NEWCHAPTERS=${WIP}/newChapters.txt
-	LASTCHAPTER=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	TIMEBASE=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_chapters | grep time_base | head -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	LENGTHMS=$(ffprobe -loglevel error -i "${INPUTFILE}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
+	LASTCHAPTER=$(ffprobe -loglevel error -i "${inputFileRepair}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	TIMEBASE=$(ffprobe -loglevel error -i "${inputFileRepair}" -print_format json -show_chapters | grep time_base | head -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	LENGTHMS=$(ffprobe -loglevel error -i "${inputFileRepair}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
 
-	if [ ${BADCHAPTER} -eq 1 ]; then
-	        ffmpeg -v error -y -i "${INPUTFILE}" -f ffmetadata ${CHAPTERS} < /dev/null
-	        lastEnd=$(cat ${CHAPTERS} | grep "END=" | tail -1 | awk -F '=' '{print $2}')
-		LENGTHMS=$(awk "BEGIN {print ${LENGTHMS} * 1000}" | bc)
-	        sed -i "s/${lastEnd}/${LENGTHMS}/g" ${CHAPTERS}
-	        ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${INPUTFILE}" -f ffmetadata -i ${CHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${remuxOutputFile}" < /dev/null
-	elif [ ${BADCHAPTER} -eq 2 ]; then
-	        ffmpeg -v error -y -i "${INPUTFILE}" -f ffmetadata ${CHAPTERS} < /dev/null
+	ffmpeg -v error -y -i "${inputFileRepair}" -f ffmetadata ${CHAPTERS} < /dev/null
+	lastEnd=$(cat ${CHAPTERS} | grep "END=" | tail -1 | awk -F '=' '{print $2}')
+	lastStart=$(cat ${CHAPTERS} | grep "START=" | tail -1 | awk -F '=' '{print $2}')
+	LENGTHMS=$(awk "BEGIN {print ${LENGTHMS} * 1000}" | bc)
+	sed -i "s/${lastEnd}/${LENGTHMS}/g" ${CHAPTERS}
+	lastEndNew=$(cat ${CHAPTERS} | grep "END=" | tail -1 | awk -F '=' '{print $2}')
+	if [ ${lastEndNew} -le ${lastStart} ]; then
+			BADCHAPTER=3
+	fi
+	if [ ${BADCHAPTER} -eq 2 ]; then
+		ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${inputFileRepair}" -f ffmetadata -i ${CHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${outputFileRepair}" < /dev/null
+	elif [ ${BADCHAPTER} -eq 3 ]; then
+	        ffmpeg -v error -y -i "${inputFileRepair}" -f ffmetadata ${CHAPTERS} < /dev/null
 	        cat ${CHAPTERS} | head -n -5 > ${NEWCHAPTERS}
-	        ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${INPUTFILE}" -f ffmetadata -i ${NEWCHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${remuxOutputFile}" < /dev/null
+	        ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${inputFileRepair}" -f ffmetadata -i ${NEWCHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${outputFileRepair}" < /dev/null
 		rm $CHAPTERS $NEWCHAPTERS
 	fi
+	EXITCODE=$?
+	checkExitCode "repairChapters"
+}
+
+initialRemux () {
+echo "Remuxing file to re-order tracks"
+if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]] || [[ "${ext}" == "m2ts" ]] || [ "${NOEIA608}" = 'false' ]; then
+        if [ "${NOMOVTEXT}" = 'false' ] && [ "${NOMSMPEG}" = 'true' ]; then
+                echo "Remuxing to MP4"
+                newExt="mp4"
+                remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
+                if [ ${BADCHAPTER} -gt 1 ]; then
+                        repairChapters "${INPUTFILE}" "${remuxOutputFile}"
+                else
+                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+                fi
+        elif [ "${NOEIA608}" = 'false' ]; then
+                echo "Remuxing to MKV and converting EIA608 subs"
+                newExt="mkv"
+                remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
+                if [ ${BADCHAPTER} -gt 1 ]; then
+                        repairChapters "${INPUTFILE}" "${remuxOutputFile}"
+                        convertEIA608
+                else
+                        convertEIA608
+                fi
+        elif [[ "${ext}" == "m2ts" ]]; then
+                echo "Remuxing to M2TS"
+                newExt="m2ts"
+                remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
+                if [ ${BADCHAPTER} -gt 1 ]; then
+                        repairChapters "${INPUTFILE}" "${remuxOutputFile}"
+                else
+                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+                fi
+        else
+                echo "Remuxing to MKV"
+                newExt="mkv"
+                remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
+                if [ ${BADCHAPTER} -gt 1 ]; then
+                        repairChapters "${INPUTFILE}" "${remuxOutputFile}"
+                else
+                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+                fi
+        fi
+else
+        echo "Remuxing to MKV"
+        newExt="mkv"
+        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
+        if [ ${BADCHAPTER} -gt 1 ]; then
+                repairChapters "${INPUTFILE}" "${remuxOutputFile}"
+        else
+                ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+        fi
+fi
+
+EXITCODE=$?
+checkExitCode "initialRemux"
 }
 
 # Remuxes input file so that video tracks are grouped first, audio second, subs, third.  Simplifies track selection logic
@@ -731,62 +1027,14 @@ NOMSMPEG=$(ffprobe -i "${INPUTFILE}" -select_streams v -show_entries stream -v q
 inputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}')
 
 # Checks if end time for last chapter is after the video's duration
-BADCHAPTER=$(checkChapters)
+BADCHAPTER=$(checkChapters "${INPUTFILE}")
 
-echo "Remuxing file to re-order tracks"
-if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]] || [[ "${ext}" == "m2ts" ]] || [ "${NOEIA608}" = 'false' ]; then
-	if [ "${NOMOVTEXT}" = 'false' ] && [ "${NOMSMPEG}" = 'true' ]; then
-		echo "Remuxing to MP4"
-	        newExt="mp4"
-	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-		if [ ${BADCHAPTER} -ne 0 ]; then
-			repairChapters
-		else
-			ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
-		fi
-	elif [ "${NOEIA608}" = 'false' ]; then
-		echo "Remuxing to MKV and converting EIA608 subs"
-		newExt="mkv"
-		remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-                if [ ${BADCHAPTER} -ne 0 ]; then
-                        repairChapters
-			convertEIA608
-		else
-			convertEIA608
-		fi
-        elif [[ "${ext}" == "m2ts" ]]; then
-		echo "Remuxing to M2TS"
-		newExt="m2ts"
-	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-                if [ ${BADCHAPTER} -ne 0 ]; then
-                        repairChapters
-                else
-                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
-                fi
-	else
-		echo "Remuxing to MKV"
-	        newExt="mkv"
-	        remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-                if [ ${BADCHAPTER} -ne 0 ]; then
-                        repairChapters
-                else
-                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
-                fi
-	fi
-else
-	echo "Remuxing to MKV"
-	newExt="mkv"
-	remuxOutputFile=$(echo ${SCRATCHDIR}/${inputFile} | sed "s/.${ext}/-remux.${newExt}/g")
-	if [ ${BADCHAPTER} -ne 0 ]; then
-		repairChapters
-	else
-		ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
-	fi
-fi
-
+# Reorders tracks to account for weirdly ordered files.  Makes audio/sub selection more consistent.
+initialRemux
 
 # Get ffprobe info to be used by other functions.
 AUDIOFFPROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams a -show_entries stream -v quiet -of json)
+AV1PROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.codec_name == ("av1"))]')
 SUBFFPROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams s -show_entries stream -v quiet -of json)
 ATTACHMENTFFPROBE=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams t -show_entries stream=index -show_entries stream_tags=filename -of json)
 EMPTYAUDIOJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "${AUDIOFFPROBE}" | jq -e '. | length == 0')
@@ -803,15 +1051,15 @@ SWDECODE=$(ffprobe -i "${remuxOutputFile}" -select_streams v -show_entries strea
 if [[ "${SWDECODE}" == "true" ]]; then
 	echo "Disabling hardware accelerated decoding"
         decodeAccel=""
-        hwDL=""
+        setHWDL=0
 elif [[ "${NOHWADECODE}" == "1" ]]; then
 	echo "Manually disabled hardware accelerated decoding"
         decodeAccel=""
-        hwDL=""
+        setHWDL=0
 else
 	echo "Using hardware accelerated decoding"
         decodeAccel="-hwaccel qsv"
-        hwDL="hwdownload,"
+        setHWDL=1
 fi
 
 # If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
@@ -919,17 +1167,17 @@ fi
 if [ ${ENGLISHSELECTION} -eq 1 ]; then
 	echo "Remux + English audio/subtitle selection only"
 	remuxOnly
-elif [ ${AUDIOCONVERSION} -eq 1 ]; then
+elif [ ${AUDIOCONVERSION} -eq 1 ] || [ "${AV1PROBE}" != "[]" ]; then
+	if [ "${AV1PROBE}" != "[]" ]; then
+		echo "Video codec is already AV1"
+	fi
 	echo "Converting audio only"
 	audioConversionOnly
 else
-	echo "Generating video filter parameters."
-	generateFilters
-	echo "Converting to AV1"
+	echo "Generating video filter parameters"
+	generateFilterParameters
 	av1Encode
 fi
 
-# WIP cleanup
-echo "Cleaning up WIP files/folders"
-rm -f "${remuxOutputFile}"
-rm -rf ${WIP}
+EXITCODE=-1
+checkExitCode "END"

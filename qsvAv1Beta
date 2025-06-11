@@ -129,7 +129,7 @@ while read file; do
 		-max_muxing_queue_size 2048 \
 		-max_interleave_delta 0 \
 		-avoid_negative_ts disabled \
-                "${outputFile}" < /dev/null 2>&1 > /dev/null
+                "${outputFile}" < /dev/null
 	EXITCODE=$?
 	checkExitCode "av1Encode"
 done <<< "${CHAPTERFILES}"
@@ -185,7 +185,7 @@ while read file; do
                 -max_muxing_queue_size 2048 \
                 -max_interleave_delta 0 \
                 -avoid_negative_ts disabled \
-                "${outputFile}" < /dev/null 2>&1 > /dev/null
+                "${outputFile}" < /dev/null
         EXITCODE=$?
 	checkExitCode "remuxOnly"
 done <<< "${CHAPTERFILES}"
@@ -240,7 +240,7 @@ while read file; do
                 -max_muxing_queue_size 2048 \
                 -max_interleave_delta 0 \
                 -avoid_negative_ts disabled \
-                "${outputFile}" < /dev/null 2>&1 > /dev/null
+                "${outputFile}" < /dev/null
         EXITCODE=$?
 	checkExitCode "audioConversionOnly"
 done <<< "${CHAPTERFILES}"
@@ -613,11 +613,11 @@ progressiveInInterlaced () {
 	pixFmt=$5
 
 	echo "Splitting raw video by field then rejoining"
-	ffmpeg -v error -y -stats -i "${videoToSplit}" -filter_complex "[0]il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i" -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -f rawvideo "${WIP}/rejoined.yuv" < /dev/null 2>&1 > /dev/null
+	ffmpeg -v error -y -stats -i "${videoToSplit}" -filter_complex "[0]il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i" -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -f rawvideo "${WIP}/rejoined.yuv" < /dev/null
         EXITCODE=$?
         checkExitCode "progressiveInInterlaced"
 	echo "Muxing rejoined raw video with original audio, subtitles, attachments, and metadata"
-	ffmpeg -v error -y -stats -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -i "${WIP}/rejoined.yuv" -i "${videoToSplit}" -map 0:v -map 1:a -map 1:s? -map 1:t? -map_metadata 1 -map_chapters 1 -codec copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${WIP}/finalRejoinedVideo.mkv" < /dev/null 2>&1 > /dev/null
+	ffmpeg -v error -y -stats -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -i "${WIP}/rejoined.yuv" -i "${videoToSplit}" -map 0:v -map 1:a -map 1:s? -map 1:t? -map_metadata 1 -map_chapters 1 -codec copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${WIP}/finalRejoinedVideo.mkv" < /dev/null
         EXITCODE=$?
         checkExitCode "progressiveInInterlaced"
 	echo "Replacing WIP file with new file"
@@ -633,18 +633,24 @@ generateFilters () {
 	fi
 	if [ ${setHWDL} -eq 1 ]; then
 		hwDownload="hwdownload,"
+		inFormat="format=${inputFormat},"
 	else
 		hwDownload=""
 	fi
 	if [ ${setHWUL} -eq 1 ]; then
 		hwUpload="hwupload,"
 	else
-		hwupLoad=""
+		hwUpload=""
+	fi
+	if [ ${setInFormat} -eq 1 ]; then
+		inFormat="format=${inputFormat},"
+	else
+		inFormat=""
 	fi
 	if [ ${setDetelecine} -eq 1 ]; then 
-		detelecine="format=${inputFormat},crop=w=${w}:h=${h}:x=${x}:y=${y},pullup,dejudder,fps=${frameRate},"
+		detelecine="crop=w=${w}:h=${h}:x=${x}:y=${y},pullup,dejudder,fps=${frameRate},"
 	else
-		detelecine="format=${inputFormat},crop=w=${w}:h=${h}:x=${x}:y=${y},"
+		detelecine="crop=w=${w}:h=${h}:x=${x}:y=${y},"
 	fi   
 	if [ ${setDeinterlace} -eq 1 ]; then 
 		deinterlace="vpp_qsv=rate=1:deinterlace=2:scale_mode=5"
@@ -662,9 +668,9 @@ generateFilters () {
 		scale="format=p010le"
 	fi
 	if [ ${setDetelecine} -eq 0 ] && [ ${setDeinterlace} -eq 0 ]; then
-		echo "format=${inputFormat},${hwUpload}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y},${sar}${scale}"
+		echo "${inFormat}${hwUpload}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y},${sar}${scale}"
 	else
-		echo "${hwDownload}${detelecine}${hwUpload}${deinterlace}${newFrameRate},${sar}${scale}"
+		echo "${hwDownload}${inFormat}${detelecine}${hwUpload}${deinterlace}${newFrameRate},${sar}${scale}"
 	fi
 }
 
@@ -689,6 +695,7 @@ generateFilterParameters () {
 	setScale=0
 	setFramerate=0
 	setHWUL=0
+	setInFormat=0
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
@@ -785,6 +792,7 @@ generateFilterParameters () {
 
 	if [ ${setDeinterlace} -eq 1 ]; then
 		setHWUL=1
+		setInFormat=1
 		echo "Detected interlaced video, checking for telecine"
 		if [ "${numOfFrames}" == "" ]; then
 			readFrames=3600
@@ -876,7 +884,7 @@ convertEIA608 () {
 	mapEIATracks=$(for index in ${eiaTracks}; do
 		echo "-map 0:${index}"
 	done)
-	ffmpeg -v error -stats -y -i "${INPUTFILE}" -vn -an ${mapEIATracks} -c:s srt "${WIP}/${srtMKVFile}" < /dev/null 2>&1 > /dev/null
+	ffmpeg -v error -stats -y -i "${INPUTFILE}" -vn -an ${mapEIATracks} -c:s srt "${WIP}/${srtMKVFile}" < /dev/null
         EXITCODE=$?
         echo "$EXITCODE"
 	mapSubTracks=$(if [ -z ${otherSubTracks} ]; then
@@ -887,7 +895,7 @@ convertEIA608 () {
 			done
 			echo "-map 1:s"
 		fi)
-	ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -i "${WIP}/${srtMKVFile}" -codec copy -map_chapters 0 -map 0:v -map 0:a? ${mapSubTracks} -map 0:t? "${remuxOutputFile}" < /dev/null 2>&1 > /dev/null
+	ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -i "${WIP}/${srtMKVFile}" -codec copy -map_chapters 0 -map 0:v -map 0:a? ${mapSubTracks} -map 0:t? "${remuxOutputFile}" < /dev/null
         EXITCODE=$?
         echo "$EXITCODE"
 	rm -f "${WIP}/${srtMKVFile}"
