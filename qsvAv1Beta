@@ -839,14 +839,14 @@ generateFilterParameters () {
 		BFFRatio=$(awk "BEGIN { print ( ${largestBFF} + ${largestUnDet} )}")
 
 		if [ ${largestProg} -ge 10 ]; then
-                        if [ ${largestProg} -ge 50 ]  && [ ${repeatRatioNeither} -ge 90 ]; then
+                        if [ ${largestProg} -ge 30 ]  && [ ${repeatRatioNeither} -ge 50 ]; then
                                 echo "Progressive video with interlaced encoding detected"
                                 progressiveInInterlaced "${remuxOutputFile}" "${height}" "${width}" "${frameRate}" "${inputBitDepth}"
                                 FRAMERATE="-fps_mode passthrough"
 				setHWDL=0
                                 decodeAccel=""
                                 setDeinterlace="0"
-			elif [[ ( ${TFFRatio} -ge 50 || ${BFFRatio} -ge 50 ) && ${repeatRatioSum} -le ${repeatRatioNeither} ]]; then
+			elif [[ ( ${TFFRatio} -ge 30 || ${BFFRatio} -ge 30 ) && ${repeatRatioSum} -le ${repeatRatioNeither} ]]; then
 				echo "Telecine detected, likely 24fps in 30fps"
 				setDetelecine=1
 				setFramerate=1
