@@ -662,8 +662,7 @@ generateFilters () {
 		scale="format=p010le"
 	fi
 	if [ ${setDetelecine} -eq 0 ] && [ ${setDeinterlace} -eq 0 ]; then
-		#echo "format=${inputFormat},${hwUpload}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y},${sar}${scale}"
-		echo "format=${inputFormat},vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y},${sar}${scale}"
+		echo "format=${inputFormat},${hwUpload}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y},${sar}${scale}"
 	else
 		echo "${hwDownload}${detelecine}${hwUpload}${deinterlace}${newFrameRate},${sar}${scale}"
 	fi
@@ -1004,6 +1003,7 @@ else
 fi
 
 EXITCODE=$?
+checkExitCode "initialRemux"
 }
 
 # Remuxes input file so that video tracks are grouped first, audio second, subs, third.  Simplifies track selection logic
@@ -1021,8 +1021,8 @@ inputFile=$(echo $INPUTFILE | awk -F '/' '{print $NF}')
 # Checks if end time for last chapter is after the video's duration
 BADCHAPTER=$(checkChapters "${INPUTFILE}")
 
+# Reorders tracks to account for weirdly ordered files.  Makes audio/sub selection more consistent.
 initialRemux
-checkExitCode "initialRemux"
 
 # Get ffprobe info to be used by other functions.
 AUDIOFFPROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams a -show_entries stream -v quiet -of json)
@@ -1171,6 +1171,5 @@ else
 	av1Encode
 fi
 
-echo "Cleaning up WIP files/folders"
 EXITCODE=-1
 checkExitCode "END"
