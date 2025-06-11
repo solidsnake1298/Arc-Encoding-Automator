@@ -93,13 +93,13 @@ while read file; do
                 -hwaccel_output_format qsv \
 		-extra_hw_frames 40 \
                 -i "${inputFile}" \
+                -filter_complex "${FILTERS}" \
                 -map_chapters 0 \
-		-map 0:v:0 \
+		-map ["vOut"]:v \
                 -c:v av1_qsv \
                 -q:v 22 \
                 -look_ahead_depth 40 \
                 -preset veryslow \
-                -vf "${FILTERS}" \
 		${audioCommand} \
 		${subCommand} \
 		${FRAMERATE} \
@@ -602,49 +602,40 @@ generateFilters () {
 	else
 		sar=""
 	fi
-	if [ ${setDetelecine} -eq 1 ]; then
-		detelecine="dejudder,fps=${frameRate},fieldmatch=mode=pc_n_ub:combmatch=full:combpel=70,"
+	if [ ${setHWDL} -eq 1 ]; then
+		hwDownload="hwdownload,"
 	else
-		detelecine=""
+		hwDownload=""
+	fi
+	if [ ${setDetelecine} -eq 1 ]; then
+		detelecine="[0:v:0]${hwDownload}format=nv12,pullup,dejudder,fieldmatch=mode=pc_n_ub:combmatch=full:combpel=70,hwupload[deTelecine];[deTelecine]"
+	else
+		detelecine="[0:v:0]"
 	fi
 	if [ ${setDeinterlace} -eq 1 ]; then
-		if [ ${setSWDeinterlace} -eq 1 ]; then
-			hwDeinterlace=""
-			swDeinterlace="yadif=deint=interlaced,decimate,"
-		else
-			hwDeinterlace="rate=1:deinterlace=2:"
-			swDeinterlace=""
-		fi
+		deinterlace="vpp_qsv=rate=1:deinterlace=2[deInt];[deInt]"
 	else
-		hwDeinterlace=""
-		swDeinterlace=""
+		deinterlace=""
 	fi
 	if [ ${setScale} -eq 1 ]; then
 		scale="scale_qsv=w=${w_scale}:h=${h_scale}:format=p010le"
 	else
  		scale="format=p010le"
 	fi
-	if [ ${setHWDL} -eq 1 ]; then
-		hwDL="hwdownload,format=${inputFormat},"
-	else
-		hwDL=""
-	fi
-	if [ ${setHWUL} -eq 1 ];then
-		hwUL="hwupload,"
-	else
-		hwUL=""
-	fi
-	if [ ${setHWFramerate} -eq 1 ]; then
+	if [ ${setFramerate} -eq 1 ]; then
 		newFrameRate="framerate=${newFrameRate}:"
 	else
 		newFrameRate=""
 	fi
-	echo "${hwDL}${detelecine}${swDeinterlace}${sar}${hwUL}vpp_qsv=${hwDeinterlace}${newFrameRate}cw=${w}:ch=${h}:cx=${x}:cy=${y}:async_depth=4,${scale}"
+	filterComplex1="${detelecine}"
+	filterComplex2="${deinterlace}"
+	filterComplex3="vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:${newFrameRate}async_depth=4,${sar}${scale}[vOut]"
+	echo "${filterComplex1}${filterComplex2}${filterComplex3}"
 }
 
 # Probes file and generates video filters parameters
 generateFilterParameters () {
-	# ffprobe to determine if interlaced.  If yes, set yadif deinterlace filter.
+	# ffprobe to determine if interlaced.  If yes, set bwdif deinterlace filter.
 	rawParams=$(ffprobe -v error -i "${INPUTFILE}" -select_streams v:0 -show_entries streams)
 	interlaced=$(echo ${rawParams} | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}' | head -1)
 	videoLanguageTag=$(echo ${rawParams} | grep -o '')
@@ -659,11 +650,9 @@ generateFilterParameters () {
 	height=$(echo ${rawParams} | grep -o 'height=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	duration=$(echo ${rawParams} | grep -o 'duration=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	setDetelecine=0
-	setSWDeinterlace=0
-	setHWUL=0
 	setSar=0
 	setScale=0
-	setHWFramerate=0
+	setFramerate=0
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
@@ -769,25 +758,20 @@ generateFilterParameters () {
                                 echo "Progressive video with interlaced encoding detected"
                                 progressiveInInterlaced "${remuxOutputFile}" "${height}" "${width}" "${frameRate}" "${inputBitDepth}"
                                 FRAMERATE="-fps_mode passthrough"
+				setHWDL=0
                                 decodeAccel=""
-                                setHWDL=0
-                                setHWUL=1
                                 setDeinterlace="0"
 			elif [[ ( ${TFFRatio} -ge 50 || ${BFFRatio} -ge 50 ) && ${repeatRatioSum} -le ${repeatRatioNeither} ]]; then
 				echo "Telecine detected, likely 24fps in 30fps"
 				setDetelecine=1
-				setSWDeinterlace=1
-				setHWUL=1
-				setHWFramerate=1
+				setFramerate=1
 				newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.8}")
 				newFrameRate="${newFrameRateNum}/${frameRateDenom}"
 				FRAMERATE=""
 			elif [[ ( ${TFFRatio} -ge 20 || ${BFFRatio} -ge 20 ) && ${repeatRatioSum} -ge ${repeatRatioNeither} ]]; then
                                 echo "Telecine detected, likely 24fps in 60fps"
                                 setDetelecine=1
-				setSWDeinterlace=1
-                                setHWUL=1
-				setHWFramerate=1
+				setFramerate=1
                                 newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.4}")
 				newFrameRate="${newFrameRateNum}/${frameRateDenom}"
                                 FRAMERATE=""
@@ -806,7 +790,6 @@ generateFilterParameters () {
 	echo "Automatically detecting SAR/DAR"
 	if [[ "${sar}" != "1:1" ]] && [ ! -z ${sar} ]; then
 		setSar=1
-		setHWUL=1
 		sarNum=$(echo ${sar} | awk -F ':' '{print $1}')
 		sarDenom=$(echo ${sar} | awk -F ':' '{print $2}')
 		sarRatio=$(awk "BEGIN {print ${sarNum} / ${sarDenom}}")
@@ -839,14 +822,8 @@ generateFilterParameters () {
 	elif [ -z ${sar} ]; then
 		echo "SAR not set.  Setting to 1:1"
 		setSar=1
-		setHWUL=1
 		w_scale=${w}
 		h_scale=${h}
-	fi
-
-	if [ ${setSar} -eq 0 ] && [ ${setDetelecine} -eq 0 ]; then
-		setHWDL=0
-		setHWUL=0
 	fi
 
 	FILTERS=$(generateFilters)
