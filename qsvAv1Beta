@@ -93,13 +93,13 @@ while read file; do
                 -hwaccel_output_format qsv \
 		-extra_hw_frames 40 \
                 -i "${inputFile}" \
-                -filter_complex "${FILTERS}" \
-                -map_chapters 0 \
-		-map ["vOut"]:v \
+		-map 0:v:0 \
                 -c:v av1_qsv \
                 -q:v 22 \
-                -look_ahead_depth 40 \
                 -preset veryslow \
+                -look_ahead_depth 40 \
+                -vf "${FILTERS}" \
+                -map_chapters 0 \
 		${audioCommand} \
 		${subCommand} \
 		${FRAMERATE} \
@@ -597,40 +597,36 @@ progressiveInInterlaced () {
 
 # Generates filter based on results of probe
 generateFilters () {
-	if [ ${setSar} -eq 1 ]; then
+	if [ ${setSar} -eq 1 ]; then 
 		sar="setsar=1:1,"
-	else
+	else 
 		sar=""
-	fi
-	if [ ${setHWDL} -eq 1 ]; then
-		hwDownload="hwdownload,"
+	fi   
+	if [ ${setDetelecine} -eq 1 ]; then 
+		detelecine="hwdownload,format=${inputFormat},crop=w=${w}:h=${h}:x=${x}:y=${y},pullup,dejudder,fps=${frameRate},hwupload,"
 	else
-		hwDownload=""
-	fi
-	if [ ${setDetelecine} -eq 1 ]; then
-		detelecine="[0:v:0]${hwDownload}format=nv12,pullup,dejudder,fieldmatch=mode=pc_n_ub:combmatch=full:combpel=70,hwupload[deTelecine];[deTelecine]"
-	else
-		detelecine="[0:v:0]"
-	fi
-	if [ ${setDeinterlace} -eq 1 ]; then
-		deinterlace="vpp_qsv=rate=1:deinterlace=2[deInt];[deInt]"
-	else
+		detelecine="hwdownload,format=${inputFormat},crop=w=${w}:h=${h}:x=${x}:y=${y},hwupload"
+	fi   
+	if [ ${setDeinterlace} -eq 1 ]; then 
+		deinterlace="vpp_qsv=rate=1:deinterlace=2:scale_mode=5"
+	else 
 		deinterlace=""
-	fi
-	if [ ${setScale} -eq 1 ]; then
-		scale="scale_qsv=w=${w_scale}:h=${h_scale}:format=p010le"
-	else
- 		scale="format=p010le"
-	fi
-	if [ ${setFramerate} -eq 1 ]; then
-		newFrameRate="framerate=${newFrameRate}:"
-	else
+	fi   
+	if [ ${setFramerate} -eq 1 ]; then 
+		newFrameRate=":framerate=${newFrameRate}"
+	else 
 		newFrameRate=""
 	fi
-	filterComplex1="${detelecine}"
-	filterComplex2="${deinterlace}"
-	filterComplex3="vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:${newFrameRate}async_depth=4,${sar}${scale}[vOut]"
-	echo "${filterComplex1}${filterComplex2}${filterComplex3}"
+	if [ ${setScale} -eq 1 ]; then 
+		scale="scale_qsv=w=${w_scale}:h=${h_scale}:mode=hq:format=p010le"
+	else
+		scale="format=p010le"
+	fi
+	if [ ${setDetelecine} -eq 0 ] && [ ${setDeinterlace} -eq 0 ]; then
+		echo "vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,${sar}format=p010le"
+	else
+		echo "${detelecine}${deinterlace}${newFrameRate},${sar}${scale}"
+	fi
 }
 
 # Probes file and generates video filters parameters
