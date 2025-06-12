@@ -70,6 +70,10 @@ checkExitCode () {
 		rm -f "${remuxOutputFile}"
 		rm -rf ${WIP}
 		exit 0
+	elif [ $EXITCODE -eq -2 ]; then
+		echo "Telecine detection could not determine how to proceed for ${INPUTFILE}."
+		echo "Manually analyze file and manually set telecine option."
+		exit 2
 	elif [ $EXITCODE -ne 0 ]; then
 		echo "FFmpeg returned a non-zero exit code in ${function}.  Leaving WIP files in place and quitting."
 		exit 1
@@ -268,157 +272,157 @@ audioMapping () {
 		# checks if audio.json is empty due to untagged streams
 		# if lossless tracks are present, ignore lossy tracks
 		if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
-			echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
+			echo "Selected audio returned no results.  Selecting all audio tracks." 1>&2 | tee /dev/tty /dev/stderr
 			FINALAUDIO=$(jq -r '[.streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
 			SELECTEDAUDIO=$(jq -r '[.streams.[]]' <<< "${AUDIOFFPROBE}")
 		else
 			lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
 			if [ ! -z "${lossless}" ]; then
-				echo "Finding lossless English audio tracks, if any" > /dev/tty
+				echo "Finding lossless English audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
 				codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 				if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found DTS HD Master Audio track.  Ignoring other English tracks" > /dev/tty
+					echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
 				elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" > /dev/tty
+					echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
 				elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found FLAC audio track.  Ignoring other English tracks" > /dev/tty
+					echo "Found FLAC audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
 				fi
 			else
 				FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-				echo "No lossless English tracks found" > /dev/tty
+				echo "No lossless English tracks found" 1>&2 | tee /dev/tty /dev/stderr
 			fi
                         lossless=$(jq -r '.[] | select(.tags.language == ("jpn"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
-				echo "Finding lossless Japanese audio tracks, if any" > /dev/tty
+				echo "Finding lossless Japanese audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")"
-					echo "Found DTS HD Master Audio track.  Ignoring other Japanese tracks" > /dev/tty
+					echo "Found DTS HD Master Audio track.  Ignoring other Japanese tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")"
-					echo "Found Dolby TrueHD audio track.  Ignoring other Japanese tracks" > /dev/tty
+					echo "Found Dolby TrueHD audio track.  Ignoring other Japanese tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")"
-					echo "Found FLAC audio track.  Ignoring other Japanese tracks" > /dev/tty
+					echo "Found FLAC audio track.  Ignoring other Japanese tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 fi
                         else
 				FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")"
-				echo "No lossless Japanese tracks found" > /dev/tty
+				echo "No lossless Japanese tracks found" 1>&2 | tee /dev/tty /dev/stderr
                         fi
 		fi
 	elif [ ${KOREAN} -eq 1 ]; then
                 if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
-                        echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
+                        echo "Selected audio returned no results.  Selecting all audio tracks." 1>&2 | tee /dev/tty /dev/stderr
                         FINALAUDIO=$(jq -r '[.streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
 			SELECTEDAUDIO=$(jq -r '[.streams.[]]' <<< "${AUDIOFFPROBE}")
                 else
                         lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
-                                echo "Finding lossless English audio tracks, if any" > /dev/tty
+                                echo "Finding lossless English audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
                                         FINALAUDIO=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-                                        echo "Found DTS HD Master Audio track.  Ignoring other English tracks" > /dev/tty
+                                        echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
                                         FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-                                        echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" > /dev/tty
+                                        echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
                                         FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-                                        echo "Found FLAC audio track.  Ignoring other English tracks" > /dev/tty
+                                        echo "Found FLAC audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 fi
                         else
                                 FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-                                echo "No lossless English tracks found" > /dev/tty
+                                echo "No lossless English tracks found" 1>&2 | tee /dev/tty /dev/stderr
                         fi
                         lossless=$(jq -r '.[] | select(.tags.language == ("kor"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
-				echo "Finding lossless Korean audio tracks, if any" > /dev/tty
+				echo "Finding lossless Korean audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
                                         FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("kor")) | .index' <<< "${SELECTEDAUDIO}")"
-					echo "Found DTS HD Master Audio track.  Ignoring other Korean tracks" > /dev/tty
+					echo "Found DTS HD Master Audio track.  Ignoring other Korean tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
                                         FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("kor")) | .index' <<< "${SELECTEDAUDIO}")"
-					echo "Found Dolby TrueHD audio track.  Ignoring other Korean tracks" > /dev/tty
+					echo "Found Dolby TrueHD audio track.  Ignoring other Korean tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
                                         FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("kor")) | .index' <<< "${SELECTEDAUDIO}")"
-					echo "Found FLAC audio track.  Ignoring other Korean tracks" > /dev/tty
+					echo "Found FLAC audio track.  Ignoring other Korean tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 fi
                         else
                                 FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.tags.language == ("kor")) | .index' <<< "${SELECTEDAUDIO}")"
-				echo "No lossless Korean tracks found" > /dev/tty
+				echo "No lossless Korean tracks found" 1>&2 | tee /dev/tty /dev/stderr
                         fi
 		fi
         elif [ ${CHINESE} -eq 1 ]; then
                 if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
-                        echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
+                        echo "Selected audio returned no results.  Selecting all audio tracks." 1>&2 | tee /dev/tty /dev/stderr
                         FINALAUDIO=$(jq -r '[.streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
                         SELECTEDAUDIO=$(jq -r '[.streams.[]]' <<< "${AUDIOFFPROBE}")
                 else    
                         lossless=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
-                                echo "Finding lossless English audio tracks, if any" > /dev/tty
+                                echo "Finding lossless English audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
                                         FINALAUDIO=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-                                        echo "Found DTS HD Master Audio track.  Ignoring other English tracks" > /dev/tty
+                                        echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
                                         FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-                                        echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" > /dev/tty
+                                        echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
                                         FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-                                        echo "Found FLAC audio track.  Ignoring other English tracks" > /dev/tty
+                                        echo "Found FLAC audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 fi
                         else
                                 FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-                                echo "No lossless English tracks found" > /dev/tty
+                                echo "No lossless English tracks found" 1>&2 | tee /dev/tty /dev/stderr
                         fi
 			lossless=$(jq -r '.[] | select(.tags.language == ("chi") or .tags.language == ("zho"))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
                         if [ ! -z "${lossless}" ]; then
-                                echo "Finding lossless Chinese audio tracks, if any" > /dev/tty
+                                echo "Finding lossless Chinese audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("chi") or .tags.language == ("zho")) | .index' <<< "${SELECTEDAUDIO}")"
-                                        echo "Found DTS HD Master Audio track.  Ignoring other Korean tracks" > /dev/tty
+                                        echo "Found DTS HD Master Audio track.  Ignoring other Korean tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("chi") or .tags.language == ("zho")) | .index' <<< "${SELECTEDAUDIO}")"
-                                        echo "Found Dolby TrueHD audio track.  Ignoring other Korean tracks" > /dev/tty
+                                        echo "Found Dolby TrueHD audio track.  Ignoring other Korean tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("chi") or .tags.language == ("zho")) | .index' <<< "${SELECTEDAUDIO}")"
-                                        echo "Found FLAC audio track.  Ignoring other Korean tracks" > /dev/tty
+                                        echo "Found FLAC audio track.  Ignoring other Korean tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 fi
                         else
 				FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.tags.language == ("chi") or .tags.language == ("zho")) | .index' <<< "${SELECTEDAUDIO}")"
-                                echo "No lossless Chinese tracks found" > /dev/tty
+                                echo "No lossless Chinese tracks found" 1>&2 | tee /dev/tty /dev/stderr
                         fi
                 fi
         else
                 # checks if audio.json is empty due to untagged streams
                 if [ "${EMPTYAUDIOJSON}" = 'true' ]; then
-                        echo "Selected audio returned no results.  Selecting all audio tracks." > /dev/tty
+                        echo "Selected audio returned no results.  Selecting all audio tracks." 1>&2 | tee /dev/tty /dev/stderr
 			FINALAUDIO=$(jq -r '[.streams[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
 			SELECTEDAUDIO=$(jq -r '[.streams.[]]' <<< "${AUDIOFFPROBE}")
 		else
                 	lossless=$(egrep -i "dts-hd ma|truehd|flac" <<< "${SELECTEDAUDIO}" | grep -v "title" | head -1)
 	                if [ ! -z "${lossless}" ]; then
-				echo "Finding lossless English audio tracks, if any" > /dev/tty
+				echo "Finding lossless English audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
 	                        codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 	                        if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found DTS HD Master Audio track.  Ignoring other English tracks" > /dev/tty
+					echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
 	                        elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd")) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" > /dev/tty
+					echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
 	                        elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("flac")) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found FLAC audio track.  Ignoring other English tracks" > /dev/tty
+					echo "Found FLAC audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
 	                        fi
 	                else
 				FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-				echo "No lossless English tracks found" > /dev/tty
+				echo "No lossless English tracks found" 1>&2 | tee /dev/tty /dev/stderr
 	                fi        
 		fi
 	fi
@@ -433,13 +437,13 @@ audioMapping () {
 		index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
 		if [ ${compatCodec} -eq 0 ] || [ ${ENGLISHSELECTION} -eq 1 ]; then
 	                audioLoop="-map 0:a:${index} -c:a:${trackNumber} copy"
-			echo "Audio codec for track ${trackNumber} is already FOSS or widely compatible." > /dev/tty
+			echo "Audio codec for track ${trackNumber} is already FOSS or widely compatible." 1>&2 | tee /dev/tty /dev/stderr
 			((++trackNumber))
 			echo ${audioLoop}
 		else
 			audioLoop="-map 0:a:${index} -c:a:${trackNumber} libopus -vbr on -compression_level 10 -application audio"
 			channels=$(jq --arg l ${index} '.streams[$l|fromjson].channels' <<< "${AUDIOFFPROBE}")
-			echo "Track ${trackNumber} will be converted to OPUS" > /dev/tty
+			echo "Track ${trackNumber} will be converted to OPUS" 1>&2 | tee /dev/tty /dev/stderr
 			if [ ${channels} -gt 2 -a ${channels} -lt 6 ]; then
 				audioLoop="-mapping_family 1 -ac ${channels}"
 			fi
@@ -466,10 +470,10 @@ subMapping () {
 	noMovText=$(jq '[.streams[] | select(.codec_name == ("mov_text"))]' <<< ${SUBFFPROBE} | jq -e '. | length == 0')
 	# Checks for no subtitle track.  Common for older fansubs with burned in subtitles.
 	if [ "${EMPTYSUBJSON}" = 'true' ] || [ "${SELECTEDSUBS}" == "[]" ]; then
-		echo "No subtitles detected" > /dev/tty
+		echo "No subtitles detected" 1>&2 | tee /dev/tty /dev/stderr
 		SUBCOMMAND="-sn"
 	elif [ "${noMovText}" = 'false' ]; then
-		echo "Converting mov_text to SRT" > /dev/tty
+		echo "Converting mov_text to SRT" 1>&2 | tee /dev/tty /dev/stderr
 		trackNumber=0
 		SUBCOMMAND=$(while read rawIndex; do
 			index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
@@ -487,7 +491,7 @@ subMapping () {
 	else
 	# If audio language tags are not present, it is safe to assume subtitle language tags aren't either
 		SUBCOMMAND="-c:s copy"
-		echo "Mapping subtitle tracks" > /dev/tty
+		echo "Mapping subtitle tracks" 1>&2 | tee /dev/tty /dev/stderr
 		while read rawIndex; do
 			index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
 			SUBCOMMAND="${SUBCOMMAND} -map 0:s:${index}"
@@ -499,13 +503,13 @@ subMapping () {
 	firstAttachmentTrack=$(jq -r '.streams[0] | .index' <<< "${ATTACHMENTFFPROBE}" | bc)
         # Checks for attachments.  Only expected when using ASS subtitles.
         if [ "${EMPTYATTACHMENTJSON}" = 'true' ]; then
-		echo "Including all attachments, if any" > /dev/tty
+		echo "Including all attachments, if any" 1>&2 | tee /dev/tty /dev/stderr
         	ATTACHMENTCOMMAND="-map 0:t?"
 	elif [ "${SUBCOMMAND}" = '-sn' ]; then
-		echo "No subtitle tracks, dropping all attachments" > /dev/tty
+		echo "No subtitle tracks, dropping all attachments" 1>&2 | tee /dev/tty /dev/stderr
 		ATTACHMENTCOMMAND=""
         else
-		echo "Extracting fonts used by selected ASS tracks" > /dev/tty
+		echo "Extracting fonts used by selected ASS tracks" 1>&2 | tee /dev/tty /dev/stderr
 		# When there are fonts, pulls in ASS sub style lines from the tracks selected
 		while read subIndex ; do
 			index=$(awk "BEGIN {print ${subIndex} - ${firstTrack}}" | bc)
@@ -515,7 +519,7 @@ subMapping () {
 				fonts+="${newFonts}"
 			fi
 		done <<< "$(jq '.[].index' <<< "${SELECTEDSUBS}")"
-		echo "Dumping attachments and dropping unused fonts" > /dev/tty
+		echo "Dumping attachments and dropping unused fonts" 1>&2 | tee /dev/tty /dev/stderr
                 uniqueFonts=$(echo -e "${fonts}" | sort | uniq)
                 ATTACHMENTCOMMAND=$(while read attachmentIndex ; do
                         index=$(awk "BEGIN {print ${attachmentIndex} - ${firstAttachmentTrack}}" | bc)
@@ -838,7 +842,7 @@ generateFilterParameters () {
 		TFFRatio=$(awk "BEGIN { print ( ${largestTFF} + ${largestUnDet} )}")
 		BFFRatio=$(awk "BEGIN { print ( ${largestBFF} + ${largestUnDet} )}")
 
-		if [ ${largestProg} -ge 10 ]; then
+		if [ ${largestProg} -ge 5 ]; then
                         if [ ${largestProg} -ge 30 ]  && [ ${repeatRatioNeither} -ge 50 ]; then
                                 echo "Progressive video with interlaced encoding detected"
                                 progressiveInInterlaced "${remuxOutputFile}" "${height}" "${width}" "${frameRate}" "${inputBitDepth}"
@@ -860,6 +864,10 @@ generateFilterParameters () {
                                 newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.4}")
 				newFrameRate="${newFrameRateNum}/${frameRateDenom}"
                                 FRAMERATE=""
+			else
+				echo "Telecine likely, but did not meet thresholds"
+				EXITCODE=-2
+				checkExitCode "Uncertain telecine detection"
 			fi
 		else
 			echo "Telecine was not detected"
@@ -914,16 +922,16 @@ checkChapters () {
 	LENGTH=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
 
 	if [ -z ${LASTCHAPTEREND} ]; then
-	        echo "${INPUTFILE} - No chapters present" > /dev/tty
+	        echo "${INPUTFILE} - No chapters present" 1>&2 | tee /dev/tty /dev/stderr
 		echo "0"
 	elif [ ${LASTCHAPTEREND} -gt ${LENGTH} ]; then
-	        echo "Fixing bad last chapter for ${INPUTFILE}" > /dev/tty
+	        echo "Fixing bad last chapter for ${INPUTFILE}" 1>&2 | tee /dev/tty /dev/stderr
 		echo "2"
 	elif [ ! -z ${LASTCHAPTEREND} ] && [ ${SECONDLASTCHAPTEREND} -eq ${LASTCHAPTERSTART} ] && [ ${SECONDLASTCHAPTEREND} -eq ${LASTCHAPTEREND} ]; then
-        	echo "${INPUTFILE} - Last chapter has no length.  Removing..." > /dev/tty
+        	echo "${INPUTFILE} - Last chapter has no length.  Removing..." 1>&2 | tee /dev/tty /dev/stderr
 		echo "3"
 	else
-	        echo "${INPUTFILE} - All chapters valid" > /dev/tty
+	        echo "${INPUTFILE} - All chapters valid" 1>&2 | tee /dev/tty /dev/stderr
 		echo "1"
 	fi
 }
