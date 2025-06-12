@@ -30,22 +30,49 @@ EMPTYCHAPTERPROBE=""
 FRAMERATE=""
 EXITCODE=0
 
+# show_help function
+show_help() {
+    echo "Usage: $(basename "$0") [-i] FILE_TO_ENCODE [-c NUMBER|-s NUMBER] [-w PATH_TO_SCRATCH_DIRECTORY] [-a|k|m|h|e|o]"
+    echo
+    echo "	-i INPUTFILE		The file you wish to encode/remux"
+    echo "	-c NUMBER		For files with multiple episodes, but a consistent number of chapters"
+    echo "				per episode, provide an integer and the input file will be split into multiple files"
+    echo "				with the number of chapters specified in each file."
+    echo "	-s NUMBER(s)		Similar to -c, but can handle instances with one or more episodes have a different"
+    echo "				number of chapters in the episode. Start and end chapters are colon separate, files"
+    echo "				are comma separate."
+    echo "				Example: -s \"00:05,06:10,11:15,16:20,21:25,26:30,31:35,36:40,41:45,46:50,51:55,56:60,61:65,66:70\""
+    echo "				In this example the first episode has 6 chapters while the rest have 5."
+    echo "	-w DIRECTORY_PATH	You can specify a directory that this script will use as a scratch/WIP directory."
+    echo "				This is can help reduce disk I/O and make the file transfers much more sequential and, thus, faster."
+    echo "	-a			If you wish to select Japanese language audio tracks, enable this option."
+    echo "	-k			If you wish to select Korean language audio tracks, enable this option."
+    echo "	-m			If you wish to select Chinese language audio tracks, enable this option.  This should select the most common dialets."
+    echo "	-h			Disables hardware accelerated DEcoding.  Useful if the source video uses a codec I haven't added to the block list."
+    echo "	-e			When this option is enabled the input file will be remuxed as well as English audio/subtitle selection."
+    echo "				No encoding will occur.  Can be combined with a, k, and m."
+    echo "	-o			When this option is enabled only the audio will be re-encoded to OPUS, when applicable.  Can be combined"
+    echo "				with options a, k, and m.  This option will be ignored if option e is also enabled."
+    echo
+    return
+}
+
 # Reads input paramamters
-while getopts i:c:a:k:r:s:h:w:e:o:m: option; do
+while getopts :i:c:s:w:akmheo option; do
         case ${option} in
                 i) INPUTFILE=${OPTARG};;
                 c) CHAPTERSEPISODE=${OPTARG};;
-                a) ANIME=${OPTARG};;
-                k) KOREAN=${OPTARG};;
-		m) CHINESE=${OPTARG};;
+                a) ANIME=1;;
+                k) KOREAN=1;;
+		m) CHINESE=1;;
 		s) CHAPSELECT=${OPTARG};;
-		h) NOHWADECODE=${OPTARG};;
+		h) NOHWADECODE=1;;
 		w) SCRATCHDIR=${OPTARG};;
-		e) ENGLISHSELECTION=${OPTARG};;
-		o) AUDIOCONVERSION=${OPTARG};;
-               \?) echo "Invalid option"
-                   exit;;
-        esac
+		e) ENGLISHSELECTION=1;;
+		o) AUDIOCONVERSION=1;;
+		h) show_help ; exit 0;;
+                \?) echo "Invalid option" ; show_help ; exit 1;;
+	esac
 done
 
 # Checks for required input file name
@@ -109,7 +136,7 @@ while read file; do
 		-v error \
                 -init_hw_device qsv=qs@va \
                 -filter_hw_device qs \
-                ${decodeAccel} \
+		${decodeAccel} \
                 -hwaccel_output_format qsv \
 		-extra_hw_frames 40 \
                 -i "${inputFile}" \
@@ -636,8 +663,7 @@ generateFilters () {
 		sar=""
 	fi
 	if [ ${setHWDL} -eq 1 ]; then
-		hwDownload="hwdownload,"
-		inFormat="format=${inputFormat},"
+		hwDownload="hwdownload,format=${inputFormat},"
 	else
 		hwDownload=""
 	fi
@@ -652,12 +678,12 @@ generateFilters () {
 		inFormat=""
 	fi
 	if [ ${setDetelecine} -eq 1 ]; then 
-		detelecine="crop=w=${w}:h=${h}:x=${x}:y=${y},pullup,dejudder,fps=${frameRate},"
+		detelecine="pullup,dejudder,fps=${frameRate},"
 	else
-		detelecine="crop=w=${w}:h=${h}:x=${x}:y=${y},"
+		detelecine=""
 	fi   
 	if [ ${setDeinterlace} -eq 1 ]; then 
-		deinterlace="vpp_qsv=rate=1:deinterlace=2:scale_mode=5"
+		deinterlace="vpp_qsv=rate=0:deinterlace=2,"
 	else 
 		deinterlace=""
 	fi   
@@ -671,11 +697,7 @@ generateFilters () {
 	else
 		scale="format=p010le"
 	fi
-	if [ ${setDetelecine} -eq 0 ] && [ ${setDeinterlace} -eq 0 ]; then
-		echo "${inFormat}${hwUpload}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y},${sar}${scale}"
-	else
-		echo "${hwDownload}${inFormat}${detelecine}${hwUpload}${deinterlace}${newFrameRate},${sar}${scale}"
-	fi
+	echo "${hwDownload}${detelecine}${hwUpload}vpp_qsv=cw=720:ch=352:cx=0:cy=66:scale_mode=5${newFrameRate},${deinterlace}${sar}${scale}"
 }
 
 # Probes file and generates video filters parameters
@@ -956,11 +978,14 @@ repairChapters () {
 	fi
 	if [ ${BADCHAPTER} -eq 2 ]; then
 		ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${inputFileRepair}" -f ffmetadata -i ${CHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${outputFileRepair}" < /dev/null
+		rm $CHAPTERS
 	elif [ ${BADCHAPTER} -eq 3 ]; then
 	        ffmpeg -v error -y -i "${inputFileRepair}" -f ffmetadata ${CHAPTERS} < /dev/null
 	        cat ${CHAPTERS} | head -n -5 > ${NEWCHAPTERS}
 	        ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${inputFileRepair}" -f ffmetadata -i ${NEWCHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${outputFileRepair}" < /dev/null
 		rm $CHAPTERS $NEWCHAPTERS
+	else
+		rm $CHAPTERS
 	fi
 	EXITCODE=$?
 	checkExitCode "repairChapters"
@@ -1168,7 +1193,15 @@ else
 		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx"))]' <<< "${SUBFFPROBE}")
 	fi
 fi
-
+echo "english = ${ENGLISHSELECTION}"
+echo "anime = ${ANIME}"
+echo "hwaccel = ${NOHWADECODE}"
+echo "chinese = ${CHINESE}"
+echo "korean = ${KOREAN}"
+echo "audio = ${AUDIOCONVERSION}"
+echo "scratchdir = ${SCRATCHDIR}"
+echo "chapters = ${CHAPTERSEPISODE}"
+echo "chapter select = ${CHAPSELECT}"
 # If the -f 1 option is used, all audio tracks will be converted to OPUS.
 # If a lossless Dolby/DTS codec exists for English and/or Japanese, the lossy tracks
 # will be discarded in favor of converting only the lossless track.
