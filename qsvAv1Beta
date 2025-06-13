@@ -678,12 +678,12 @@ generateFilters () {
 		inFormat=""
 	fi
 	if [ ${setDetelecine} -eq 1 ]; then 
-		detelecine="pullup,dejudder,fps=${frameRate},"
+		detelecine="pullup,dejudder,fieldmatch=mode=pc_n_ub:combmatch=full:combpel=70,fps=${frameRate},"
 	else
 		detelecine=""
 	fi   
 	if [ ${setDeinterlace} -eq 1 ]; then 
-		deinterlace="vpp_qsv=rate=0:deinterlace=2,"
+		deinterlace="vpp_qsv=rate=0:deinterlace=2"
 	else 
 		deinterlace=""
 	fi   
@@ -697,7 +697,7 @@ generateFilters () {
 	else
 		scale="format=p010le"
 	fi
-	echo "${hwDownload}${detelecine}${hwUpload}vpp_qsv=cw=720:ch=352:cx=0:cy=66:scale_mode=5${newFrameRate},${deinterlace}${sar}${scale}"
+	echo "${hwDownload}${detelecine}${hwUpload}${deinterlace}${newFrameRate},vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,${sar}${scale}"
 }
 
 # Probes file and generates video filters parameters
@@ -1193,18 +1193,7 @@ else
 		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx"))]' <<< "${SUBFFPROBE}")
 	fi
 fi
-echo "english = ${ENGLISHSELECTION}"
-echo "anime = ${ANIME}"
-echo "hwaccel = ${NOHWADECODE}"
-echo "chinese = ${CHINESE}"
-echo "korean = ${KOREAN}"
-echo "audio = ${AUDIOCONVERSION}"
-echo "scratchdir = ${SCRATCHDIR}"
-echo "chapters = ${CHAPTERSEPISODE}"
-echo "chapter select = ${CHAPSELECT}"
-# If the -f 1 option is used, all audio tracks will be converted to OPUS.
-# If a lossless Dolby/DTS codec exists for English and/or Japanese, the lossy tracks
-# will be discarded in favor of converting only the lossless track.
+
 if [ ${ENGLISHSELECTION} -eq 1 ]; then
 	echo "Remux + English audio/subtitle selection only"
 	remuxOnly
