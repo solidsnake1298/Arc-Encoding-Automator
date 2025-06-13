@@ -662,7 +662,7 @@ generateFilters () {
 	else 
 		sar=""
 	fi
-	if [ ${setHWDL} -eq 1 ]; then
+	if [ ${setHWDL} -eq 1 ] && [ ${setDetelecine} -eq 1 ]; then
 		hwDownload="hwdownload,format=${inputFormat},"
 	else
 		hwDownload=""
@@ -683,21 +683,20 @@ generateFilters () {
 		detelecine=""
 	fi   
 	if [ ${setDeinterlace} -eq 1 ]; then 
-		deinterlace="vpp_qsv=rate=0:deinterlace=2"
-	else 
+		if [ ${setFramerate} -eq 1 ]; then 
+			deinterlace="vpp_qsv=rate=0:deinterlace=2:framerate=${newFrameRate},"
+		else 
+			deinterlace="vpp_qsv=rate=0:deinterlace=2,"
+		fi
+	else
 		deinterlace=""
 	fi   
-	if [ ${setFramerate} -eq 1 ]; then 
-		newFrameRate=":framerate=${newFrameRate}"
-	else 
-		newFrameRate=""
-	fi
 	if [ ${setScale} -eq 1 ]; then 
 		scale="scale_qsv=w=${w_scale}:h=${h_scale}:mode=hq:format=p010le"
 	else
-		scale="format=p010le"
+		scale="scale_qsv=format=p010le"
 	fi
-	echo "${hwDownload}${detelecine}${hwUpload}${deinterlace}${newFrameRate},vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,${sar}${scale}"
+	echo "${hwDownload}${detelecine}${hwUpload}${deinterlace}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,${sar}${scale}"
 }
 
 # Probes file and generates video filters parameters
