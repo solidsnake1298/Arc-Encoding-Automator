@@ -29,7 +29,6 @@ AUDIOCONVERSION=0
 EMPTYCHAPTERPROBE=""
 FRAMERATE=""
 EXITCODE=0
-INTERLACEINPROG=0
 
 # show_help function
 show_help() {
@@ -54,13 +53,12 @@ show_help() {
     echo "				No encoding will occur.  Can be combined with a, k, and m."
     echo "	-o			When this option is enabled only the audio will be re-encoded to OPUS, when applicable.  Can be combined"
     echo "				with options a, k, and m.  This option will be ignored if option e is also enabled."
-    echo "	-p			Enable this option for videos that are progressive encoded but the video is interlaced."
     echo
     return
 }
 
 # Reads input paramamters
-while getopts :i:c:s:w:akmheop option; do
+while getopts :i:c:s:w:akmheo option; do
         case ${option} in
                 i) INPUTFILE=${OPTARG};;
                 c) CHAPTERSEPISODE=${OPTARG};;
@@ -72,7 +70,6 @@ while getopts :i:c:s:w:akmheop option; do
 		w) SCRATCHDIR=${OPTARG};;
 		e) ENGLISHSELECTION=1;;
 		o) AUDIOCONVERSION=1;;
-		p) INTERLACEINPROG=1;;
 		h) show_help ; exit 0;;
                 \?) echo "Invalid option" ; show_help ; exit 1;;
 	esac
@@ -311,7 +308,7 @@ audioMapping () {
 				echo "Finding lossless English audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
 				codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 				if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
-					FINALAUDIO=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+					FINALAUDIO=$(jq -r '.[] | select((.profile | values | startswith("DTS-HD MA")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
 					echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
 				elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
@@ -329,7 +326,7 @@ audioMapping () {
 				echo "Finding lossless Japanese audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
-					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")"
+					FINALAUDIO=$(jq -r '.[] | select((.profile | values | startswith("DTS-HD MA")) and .tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")
 					echo "Found DTS HD Master Audio track.  Ignoring other Japanese tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("jpn")) | .index' <<< "${SELECTEDAUDIO}")"
@@ -354,7 +351,7 @@ audioMapping () {
                                 echo "Finding lossless English audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
-                                        FINALAUDIO=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+					FINALAUDIO=$(jq -r '.[] | select((.profile | values | startswith("DTS-HD MA")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
                                         echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
                                         FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
@@ -372,7 +369,7 @@ audioMapping () {
 				echo "Finding lossless Korean audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
-                                        FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("kor")) | .index' <<< "${SELECTEDAUDIO}")"
+					FINALAUDIO=$(jq -r '.[] | select((.profile | values | startswith("DTS-HD MA")) and .tags.language == ("kor")) | .index' <<< "${SELECTEDAUDIO}")
 					echo "Found DTS HD Master Audio track.  Ignoring other Korean tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
                                         FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("kor")) | .index' <<< "${SELECTEDAUDIO}")"
@@ -397,7 +394,7 @@ audioMapping () {
                                 echo "Finding lossless English audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
-                                        FINALAUDIO=$(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
+					FINALAUDIO=$(jq -r '.[] | select((.profile | values | startswith("DTS-HD MA")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
                                         echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
                                         FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
@@ -415,7 +412,7 @@ audioMapping () {
                                 echo "Finding lossless Chinese audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
                                 codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
                                 if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
-					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select((.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) and .tags.language == ("chi") or .tags.language == ("zho")) | .index' <<< "${SELECTEDAUDIO}")"
+					FINALAUDIO=$(jq -r '.[] | select((.profile | values | startswith("DTS-HD MA")) and .tags.language == ("chi") or .tags.language == ("zho")) | .index' <<< "${SELECTEDAUDIO}")
                                         echo "Found DTS HD Master Audio track.  Ignoring other Korean tracks" 1>&2 | tee /dev/tty /dev/stderr
                                 elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
 					FINALAUDIO="${FINALAUDIO} $(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("chi") or .tags.language == ("zho")) | .index' <<< "${SELECTEDAUDIO}")"
@@ -441,7 +438,7 @@ audioMapping () {
 				echo "Finding lossless English audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
 	                        codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 	                        if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
-					FINALAUDIO=$(jq -r '.[] | select(.profile == ("DTS-HD MA") or .profile == ("DTS-HD MA + DTS:X")) | .index' <<< "${SELECTEDAUDIO}")
+					FINALAUDIO=$(jq -r '.[] | select((.profile | values | startswith("DTS-HD MA"))) | .index' <<< "${SELECTEDAUDIO}")
 					echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
 	                        elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
 					FINALAUDIO=$(jq -r '.[] | select(.codec_name == ("truehd")) | .index' <<< "${SELECTEDAUDIO}")
@@ -455,6 +452,11 @@ audioMapping () {
 				echo "No lossless English tracks found" 1>&2 | tee /dev/tty /dev/stderr
 	                fi        
 		fi
+	fi
+
+	if [ -z "${FINALAUDIO}" ]; then
+		echo "Audio track selection did no return any index numbers.  Selecting all English tracks." 1>&2 | tee /dev/tty /dev/stderr
+		FINALAUDIO=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
 	fi
 	
 	firstTrack=$(jq -r '.streams[0] | .index' <<< "${AUDIOFFPROBE}" | bc)
@@ -646,17 +648,10 @@ progressiveInInterlaced () {
 	frameRate=$4
 	pixFmt=$5
 
-	if [ ${INTERLACEINPROG} -eq 1 ]; then
-		echo "Splitting raw video by field and rejoining as interlaced"
-		ffmpeg -v error -y -stats -i "${videoToSplit}" -filter_complex "[0]il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i,interlace=scan=tff:lowpass=complex" -flags +ildct -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -f rawvideo "${WIP}/rejoined.yuv" < /dev/null
-	        EXITCODE=$?
-        	checkExitCode "progressiveInInterlaced"
-	else
-		echo "Splitting raw video by field and rejoining as progressive"
-		ffmpeg -v error -y -stats -i "${videoToSplit}" -filter_complex "[0]il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i" -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -f rawvideo "${WIP}/rejoined.yuv" < /dev/null
-	        EXITCODE=$?
-        	checkExitCode "progressiveInInterlaced"
-	fi
+	echo "Splitting raw video by field and rejoining as progressive"
+	ffmpeg -v error -y -stats -i "${videoToSplit}" -filter_complex "[0]il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i" -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -f rawvideo "${WIP}/rejoined.yuv" < /dev/null
+	EXITCODE=$?
+        checkExitCode "progressiveInInterlaced"
 	echo "Muxing rejoined raw video with original audio, subtitles, attachments, and metadata"
 	ffmpeg -v error -y -stats -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -i "${WIP}/rejoined.yuv" -i "${videoToSplit}" -map 0:v -map 1:a -map 1:s? -map 1:t? -map_metadata 1 -map_chapters 1 -codec copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${WIP}/finalRejoinedVideo.mkv" < /dev/null
         EXITCODE=$?
@@ -905,15 +900,6 @@ generateFilterParameters () {
 			FRAMERATE="-fps_mode passthrough"
 
 		fi
-	elif [ ${INTERLACEINPROG} -eq 1 ]; then
-		echo "Switch for fixing interlaced video with progressive encoding enabled."
-		setDeinterlace=1
-                setHWUL=1
-                setInFormat=1
-		progressiveInInterlaced "${remuxOutputFile}" "${height}" "${width}" "${frameRate}" "${inputBitDepth}"
-		FRAMERATE="-fps_mode passthrough"
-		setHWDL=0 
-		decodeAccel=""
 	else
 		echo "Detected progressive video"
 		FRAMERATE="-fps_mode passthrough"
@@ -1215,11 +1201,10 @@ fi
 if [ ${ENGLISHSELECTION} -eq 1 ]; then
 	echo "Remux + English audio/subtitle selection only"
 	remuxOnly
-#elif [ ${AUDIOCONVERSION} -eq 1 ] || [ "${AV1PROBE}" != "[]" ]; then
-elif [ ${AUDIOCONVERSION} -eq 1 ]; then
-#	if [ "${AV1PROBE}" != "[]" ]; then
-#		echo "Video codec is already AV1"
-#	fi
+elif [ ${AUDIOCONVERSION} -eq 1 ] || [ "${AV1PROBE}" != "[]" ]; then
+	if [ "${AV1PROBE}" != "[]" ]; then
+		echo "Video codec is already AV1"
+	fi
 	echo "Converting audio only"
 	audioConversionOnly
 else
