@@ -29,6 +29,7 @@ AUDIOCONVERSION=0
 EMPTYCHAPTERPROBE=""
 FRAMERATE=""
 EXITCODE=0
+INTERLACEINPROG=0
 
 # show_help function
 show_help() {
@@ -687,7 +688,7 @@ generateFilters () {
 		inFormat=""
 	fi
 	if [ ${setDetelecine} -eq 1 ]; then 
-		detelecine="pullup,dejudder,fieldmatch=mode=pc_n_ub:combmatch=full:combpel=70,fps=${frameRate},"
+		detelecine="dejudder,fps=${frameRate},fieldmatch=mode=pc_n_ub:combmatch=full:combpel=70,decimate,"
 	else
 		detelecine=""
 	fi   
@@ -904,6 +905,15 @@ generateFilterParameters () {
 			FRAMERATE="-fps_mode passthrough"
 
 		fi
+	elif [ ${INTERLACEINPROG} -eq 1 ]; then
+		echo "Switch for fixing interlaced video with progressive encoding enabled."
+		setDeinterlace=1
+                setHWUL=1
+                setInFormat=1
+		progressiveInInterlaced "${remuxOutputFile}" "${height}" "${width}" "${frameRate}" "${inputBitDepth}"
+		FRAMERATE="-fps_mode passthrough"
+		setHWDL=0 
+		decodeAccel=""
 	else
 		echo "Detected progressive video"
 		FRAMERATE="-fps_mode passthrough"
@@ -1205,10 +1215,11 @@ fi
 if [ ${ENGLISHSELECTION} -eq 1 ]; then
 	echo "Remux + English audio/subtitle selection only"
 	remuxOnly
-elif [ ${AUDIOCONVERSION} -eq 1 ] || [ "${AV1PROBE}" != "[]" ]; then
-	if [ "${AV1PROBE}" != "[]" ]; then
-		echo "Video codec is already AV1"
-	fi
+#elif [ ${AUDIOCONVERSION} -eq 1 ] || [ "${AV1PROBE}" != "[]" ]; then
+elif [ ${AUDIOCONVERSION} -eq 1 ]; then
+#	if [ "${AV1PROBE}" != "[]" ]; then
+#		echo "Video codec is already AV1"
+#	fi
 	echo "Converting audio only"
 	audioConversionOnly
 else
