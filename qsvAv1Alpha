@@ -95,7 +95,7 @@ checkExitCode () {
 		# WIP cleanup
 		echo "Cleaning up WIP files/folders"
 		rm -f "${remuxOutputFile}"
-		rm -rf ${WIP}
+		rm -rf "${SCRATCHDIR}"/*
 		exit 0
 	elif [ $EXITCODE -eq -2 ]; then
 		echo "Telecine detection could not determine how to proceed for ${INPUTFILE}."
