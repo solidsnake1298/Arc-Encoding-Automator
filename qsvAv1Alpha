@@ -29,6 +29,7 @@ AUDIOCONVERSION=0
 EMPTYCHAPTERPROBE=""
 FRAMERATE=""
 EXITCODE=0
+FORCEDETELECINE=0
 
 # show_help function
 show_help() {
@@ -53,12 +54,14 @@ show_help() {
     echo "				No encoding will occur.  Can be combined with a, k, and m."
     echo "	-o			When this option is enabled only the audio will be re-encoded to OPUS, when applicable.  Can be combined"
     echo "				with options a, k, and m.  This option will be ignored if option e is also enabled."
+    echo "	-t			Forces de-telecine when previous run did was not able to conclusively detect telecine.  Specify a mode."
+    echo "				1) 24fps in 30fps mode  2) 24fps in 60fps mode  3) Progressive in interlaced mode"
     echo
     return
 }
 
 # Reads input paramamters
-while getopts :i:c:s:w:akmheo option; do
+while getopts :t:i:c:s:w:akmheo option; do
         case ${option} in
                 i) INPUTFILE=${OPTARG};;
                 c) CHAPTERSEPISODE=${OPTARG};;
@@ -70,6 +73,7 @@ while getopts :i:c:s:w:akmheo option; do
 		w) SCRATCHDIR=${OPTARG};;
 		e) ENGLISHSELECTION=1;;
 		o) AUDIOCONVERSION=1;;
+		t) FORCEDETELECINE=${OPTARG};;
 		h) show_help ; exit 0;;
                 \?) echo "Invalid option" ; show_help ; exit 1;;
 	esac
@@ -820,70 +824,79 @@ generateFilterParameters () {
                 h_scale=${h}
         fi
 
-	if [ ${setDeinterlace} -eq 1 ]; then
+	if [ ${setDeinterlace} -eq 1 ] || [ ${FORCEDETELECINE} -ne 0 ]; then
 		setHWUL=1
 		setInFormat=1
-		echo "Detected interlaced video, checking for telecine"
-		if [ "${numOfFrames}" == "" ]; then
-			readFrames=3600
-		elif [ ${numOfFrames} -lt 3600 ]; then
-			readFrames=${numOfFrames}
+		if [ ${FORCEDETELECINE} -eq 0 ]; then
+			echo "Detected interlaced video, checking for telecine"
+			if [ "${numOfFrames}" == "" ]; then
+				readFrames=3600
+			elif [ ${numOfFrames} -lt 3600 ]; then
+				readFrames=${numOfFrames}
+			else
+				readFrames=3600
+			fi
+			rawIdet=$(ffmpeg -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${remuxOutputFile}" 2>&1 | egrep "Repeated Fields|frame detection" | tail -3)
+			idetProg1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+			idetProg2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+			idetTFF1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+			idetTFF2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+			idetBFF1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+			idetBFF2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+			idetUndet1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'Undetermined: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+			idetUndet2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'Undetermined: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+			idetRepeat1=$(echo $rawIdet | grep "Repeated Fields" | tail -1 | grep -o 'Neither: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+			idetRepeat2=$(echo $rawIdet | grep "Repeated Fields" | tail -1 | grep -o 'Top: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+			idetRepeat3=$(echo $rawIdet | grep "Repeated Fields" | tail -1 | grep -o 'Bottom: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
+			progRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetProg1} / ${readFrames} ) * 100}"`)
+			progRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetProg2} / ${readFrames} ) * 100}"`)
+			TFFRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetTFF1} / ${readFrames} ) * 100}"`)
+			TFFRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetTFF2} / ${readFrames} ) * 100}"`)
+			BFFRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetBFF1} / ${readFrames} ) * 100}"`)
+			BFFRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetBFF2} / ${readFrames} ) * 100}"`)
+			unDetRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetUndet1} / ${readFrames} ) * 100}"`)
+			unDetRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetUndet2} / ${readFrames} ) * 100}"`)
+			repeatRatioNeither=$(printf "%.0f" `awk "BEGIN {print ( ${idetRepeat1} / ${readFrames} ) * 100}"`)
+			repeatRatioTop=$(printf "%.0f" `awk "BEGIN {print ( ${idetRepeat2} / ${readFrames} ) * 100}"`)
+			repeatRatioBottom=$(printf "%.0f" `awk "BEGIN {print ( ${idetRepeat3} / ${readFrames} ) * 100}"`)
+			IFS=$'\n'
+			progSort=(${progRatio1} ${progRatio2})
+			TFFSort=(${TFFRatio1} ${TFFRatio2})
+			BFFSort=(${BFFRatio1} ${BFFRatio2})
+			unDetSort=(${unDetRatio1} ${unDetRatio2})
+			largestProg=$(echo "${progSort[*]}" | sort -nr | head -n1)
+			largestTFF=$(echo "${TFFSort[*]}" | sort -nr | head -n1)
+			largestBFF=$(echo "${BFFSort[*]}" | sort -nr | head -n1)
+			largestUnDet=$(echo "${unDetSort[*]}" | sort -nr | head -n1)
+			IFS=$' \t\n'
+			repeatRatioSum=$(awk "BEGIN { print ( ${repeatRatioTop} + ${repeatRatioBottom} )}")
+			TFFRatio=$(awk "BEGIN { print ( ${largestTFF} + ${largestUnDet} )}")
+			BFFRatio=$(awk "BEGIN { print ( ${largestBFF} + ${largestUnDet} )}")
 		else
-			readFrames=3600
+			echo "Forcing de-telecine"
+			largestProg=0
+			repeatRatioNeither=0
+			TFFRatio=0
+			BFFRatio=0
+			repeatRatioSum=0
 		fi
-		rawIdet=$(ffmpeg -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${remuxOutputFile}" 2>&1 | egrep "Repeated Fields|frame detection" | tail -3)
-		idetProg1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetProg2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetTFF1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetTFF2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetBFF1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetBFF2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'BFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetUndet1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'Undetermined: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetUndet2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'Undetermined: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetRepeat1=$(echo $rawIdet | grep "Repeated Fields" | tail -1 | grep -o 'Neither: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetRepeat2=$(echo $rawIdet | grep "Repeated Fields" | tail -1 | grep -o 'Top: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		idetRepeat3=$(echo $rawIdet | grep "Repeated Fields" | tail -1 | grep -o 'Bottom: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
-		progRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetProg1} / ${readFrames} ) * 100}"`)
-		progRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetProg2} / ${readFrames} ) * 100}"`)
-		TFFRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetTFF1} / ${readFrames} ) * 100}"`)
-		TFFRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetTFF2} / ${readFrames} ) * 100}"`)
-		BFFRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetBFF1} / ${readFrames} ) * 100}"`)
-		BFFRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetBFF2} / ${readFrames} ) * 100}"`)
-		unDetRatio1=$(printf "%.0f" `awk "BEGIN {print ( ${idetUndet1} / ${readFrames} ) * 100}"`)
-		unDetRatio2=$(printf "%.0f" `awk "BEGIN {print ( ${idetUndet2} / ${readFrames} ) * 100}"`)
-		repeatRatioNeither=$(printf "%.0f" `awk "BEGIN {print ( ${idetRepeat1} / ${readFrames} ) * 100}"`)
-		repeatRatioTop=$(printf "%.0f" `awk "BEGIN {print ( ${idetRepeat2} / ${readFrames} ) * 100}"`)
-		repeatRatioBottom=$(printf "%.0f" `awk "BEGIN {print ( ${idetRepeat3} / ${readFrames} ) * 100}"`)
-		IFS=$'\n'
-		progSort=(${progRatio1} ${progRatio2})
-		TFFSort=(${TFFRatio1} ${TFFRatio2})
-		BFFSort=(${BFFRatio1} ${BFFRatio2})
-		unDetSort=(${unDetRatio1} ${unDetRatio2})
-		largestProg=$(echo "${progSort[*]}" | sort -nr | head -n1)
-		largestTFF=$(echo "${TFFSort[*]}" | sort -nr | head -n1)
-		largestBFF=$(echo "${BFFSort[*]}" | sort -nr | head -n1)
-		largestUnDet=$(echo "${unDetSort[*]}" | sort -nr | head -n1)
-		IFS=$' \t\n'
-		repeatRatioSum=$(awk "BEGIN { print ( ${repeatRatioTop} + ${repeatRatioBottom} )}")
-		TFFRatio=$(awk "BEGIN { print ( ${largestTFF} + ${largestUnDet} )}")
-		BFFRatio=$(awk "BEGIN { print ( ${largestBFF} + ${largestUnDet} )}")
 
-		if [ ${largestProg} -ge 5 ]; then
-			if [ ${largestProg} -ge 30 ]  && [ ${repeatRatioNeither} -ge 50 ]; then
+		if [ ${largestProg} -ge 5 ] || [ ${FORCEDETELECINE} -ne 0 ]; then
+			if [[ ( ${largestProg} -ge 30   &&  ${repeatRatioNeither} -ge 50 ) || ( ${FORCEDETELECINE} -eq 3 && ${FORCEDETELECINE} -ne 2 && ${FORCEDETELECINE} -ne 1 ) ]]; then
                                 echo "Progressive video with interlaced encoding detected"
                                 progressiveInInterlaced "${remuxOutputFile}" "${height}" "${width}" "${frameRate}" "${inputBitDepth}"
                                 FRAMERATE="-fps_mode passthrough"
 				setHWDL=0
                                 decodeAccel=""
                                 setDeinterlace="0"
-			elif [[ ( ${TFFRatio} -ge 30 || ${BFFRatio} -ge 30 ) && ${repeatRatioSum} -le ${repeatRatioNeither} ]]; then
-				echo "Telecine detected, likely 24fps in 30fps"
+			elif [[ (( ${TFFRatio} -ge 30 || ${BFFRatio} -ge 30 ) && ${repeatRatioSum} -le ${repeatRatioNeither} ) || ( ${FORCEDETELECINE} -eq 1 && ${FORCEDETELECINE} -ne 2 && ${FORCEDETELECINE} -ne 3 ) ]]; then
+				echo "Telecine detected, likely 24fps/48fps in 30fps/60fps"
 				setDetelecine=1
 				setFramerate=1
 				newFrameRateNum=$(awk "BEGIN {print ${frameRateNum} * 0.8}")
 				newFrameRate="${newFrameRateNum}/${frameRateDenom}"
 				FRAMERATE=""
-			elif [[ ( ${TFFRatio} -ge 20 || ${BFFRatio} -ge 20 ) && ${repeatRatioSum} -ge ${repeatRatioNeither} ]]; then
+			elif [[ (( ${TFFRatio} -ge 20 || ${BFFRatio} -ge 20 ) && ${repeatRatioSum} -ge ${repeatRatioNeither} ) || ( ${FORCEDETELECINE} -eq 2 && ${FORCEDETELECINE} -ne 1 && ${FORCEDETELECINE} -ne 3 ) ]]; then
                                 echo "Telecine detected, likely 24fps in 60fps"
                                 setDetelecine=1
 				setFramerate=1

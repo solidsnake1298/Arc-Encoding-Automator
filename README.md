@@ -21,4 +21,5 @@ Automates media encoding to AV1, including handling language selection, converti
 - -w Provide path for scratch directory.  Ideally, this should be on a separate disk from the input file to reduce disk I/O and improve throughput for the remux step.  Use quotes or escapes if path contains spaces or special characters.
 - -e Language selection only.
 - -o Encodes audio, passes thru video, selects audio/subtitle tracks.
+- -t Forces de-telecine when telecine detection does not conclusively return a result.  1) 24fps/48fps in 30fps/60fps mode  2) 24fps in 60fps mode  3) Progressive in interlaced mode
 
