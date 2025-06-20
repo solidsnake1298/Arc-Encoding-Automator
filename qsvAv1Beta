@@ -705,7 +705,7 @@ generateFilters () {
 	else
 		scale="scale_qsv=format=p010le"
 	fi
-	echo "${hwDownload}${detelecine}${hwUpload}${deinterlace}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,${sar}${scale}"
+	echo "${hwDownload}${inFormat}${detelecine}${hwUpload}${deinterlace}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,${sar}${scale}"
 }
 
 # Probes file and generates video filters parameters
@@ -728,8 +728,6 @@ generateFilterParameters () {
 	setSar=0
 	setScale=0
 	setFramerate=0
-	setHWUL=0
-	setInFormat=0
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
@@ -826,6 +824,7 @@ generateFilterParameters () {
 
 	if [ ${setDeinterlace} -eq 1 ] || [ ${FORCEDETELECINE} -ne 0 ]; then
 		setHWUL=1
+		setHWDL=1
 		setInFormat=1
 		if [ ${FORCEDETELECINE} -eq 0 ]; then
 			echo "Detected interlaced video, checking for telecine"
@@ -915,6 +914,7 @@ generateFilterParameters () {
 		fi
 	else
 		echo "Detected progressive video"
+		setHWDL=0
 		FRAMERATE="-fps_mode passthrough"
 	fi
 
@@ -1102,16 +1102,20 @@ if [[ "${SWDECODE}" == "true" ]]; then
 	echo "Disabling hardware accelerated decoding"
         decodeAccel=""
 	setHWUL=1
+	setInFormat=1
         setHWDL=0
 elif [[ "${NOHWADECODE}" == "1" ]]; then
 	echo "Manually disabled hardware accelerated decoding"
         decodeAccel=""
-	setHWUP=1
+	setHWUL=1
+	setInFormat=1
         setHWDL=0
 else
 	echo "Using hardware accelerated decoding"
         decodeAccel="-hwaccel qsv"
         setHWDL=1
+	setHWUL=0
+	setInFormat=0
 fi
 
 # If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
