@@ -653,11 +653,11 @@ progressiveInInterlaced () {
 	pixFmt=$5
 
 	echo "Splitting raw video by field and rejoining as progressive"
-	ffmpeg -v error -y -stats -i "${videoToSplit}" -filter_complex "[0]il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i" -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -f rawvideo "${WIP}/rejoined.yuv" < /dev/null
+	ffmpeg -v error -y -stats -i "${videoToSplit}" -filter_complex "[0]il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i" -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -f rawvideo "rejoined.yuv" < /dev/null
 	EXITCODE=$?
         checkExitCode "progressiveInInterlaced"
 	echo "Muxing rejoined raw video with original audio, subtitles, attachments, and metadata"
-	ffmpeg -v error -y -stats -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -i "${WIP}/rejoined.yuv" -i "${videoToSplit}" -map 0:v -map 1:a -map 1:s? -map 1:t? -map_metadata 1 -map_chapters 1 -codec copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${WIP}/finalRejoinedVideo.mkv" < /dev/null
+	ffmpeg -v error -y -stats -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -i "rejoined.yuv" -i "${videoToSplit}" -map 0:v -map 1:a -map 1:s? -map 1:t? -map_metadata 1 -map_chapters 1 -codec copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${WIP}/finalRejoinedVideo.mkv" < /dev/null
         EXITCODE=$?
         checkExitCode "progressiveInInterlaced"
 	echo "Replacing WIP file with new file"
@@ -705,7 +705,7 @@ generateFilters () {
 	else
 		scale="scale_qsv=format=p010le"
 	fi
-	echo "${hwDownload}${detelecine}${hwUpload}${deinterlace}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,${sar}${scale}"
+	echo "${hwDownload}${inFormat}${detelecine}${hwUpload}${deinterlace}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,${sar}${scale}"
 }
 
 # Probes file and generates video filters parameters
@@ -728,8 +728,6 @@ generateFilterParameters () {
 	setSar=0
 	setScale=0
 	setFramerate=0
-	setHWUL=0
-	setInFormat=0
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
@@ -826,6 +824,7 @@ generateFilterParameters () {
 
 	if [ ${setDeinterlace} -eq 1 ] || [ ${FORCEDETELECINE} -ne 0 ]; then
 		setHWUL=1
+		setHWDL=1
 		setInFormat=1
 		if [ ${FORCEDETELECINE} -eq 0 ]; then
 			echo "Detected interlaced video, checking for telecine"
@@ -915,6 +914,7 @@ generateFilterParameters () {
 		fi
 	else
 		echo "Detected progressive video"
+		setHWDL=0
 		FRAMERATE="-fps_mode passthrough"
 	fi
 
@@ -1101,15 +1101,21 @@ SWDECODE=$(ffprobe -i "${remuxOutputFile}" -select_streams v -show_entries strea
 if [[ "${SWDECODE}" == "true" ]]; then
 	echo "Disabling hardware accelerated decoding"
         decodeAccel=""
+	setHWUL=1
+	setInFormat=1
         setHWDL=0
 elif [[ "${NOHWADECODE}" == "1" ]]; then
 	echo "Manually disabled hardware accelerated decoding"
         decodeAccel=""
+	setHWUL=1
+	setInFormat=1
         setHWDL=0
 else
 	echo "Using hardware accelerated decoding"
         decodeAccel="-hwaccel qsv"
         setHWDL=1
+	setHWUL=0
+	setInFormat=0
 fi
 
 # If the -c option is used to provide the number of chapters per episode, in instances where a rip has all episodes in one MKV, this will call
