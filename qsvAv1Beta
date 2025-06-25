@@ -1086,66 +1086,41 @@ else
 fi
 
 # Creates lanuage English selection parameters for audio and subtitles.  If ANIME option is enabled, also selects Japanese tracks.
-if [ ${ANIME} -eq 1 ]; then
-	echo "Selecting English and Japanese audio/subtitle tracks."
-	SELECTEDAUDIO=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "${AUDIOFFPROBE}")
-        if [ "${UNTAGGEDSUBJSON}" = 'true' ]; then
-                if [ "${EMPTYSUBJSON}" = 'true' ]; then
-                        echo "No subtitle track"
-                else
-			SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "${SUBFFPROBE}")
-                fi
-        else
-		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx") or .tags.language == ("enm"))]' <<< "${SUBFFPROBE}")
-		EMPTYSELECTEDSUBJSON=$(jq -e '.[] | length == 0' <<< "${SELECTEDSUBS}")
-                if [ "${EMPTYSELECTEDSUBJSON}" = 'true' ]; then
-			echo "No English subtitle tracks found.  Looking for mistagged \"Japanese\" tracks"
-			SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("jpn"))]' <<< "${SUBFFPROBE}")
-			EMPTYSELECTEDSUBJSON=$(jq -e '.[] | length == 0' <<< "${SELECTEDSUBS}")
-                	if [ "${EMPTYSELECTEDSUBJSON}" = 'true' ]; then
-				SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "${SUBFFPROBE}")
-				echo "Did not find English or Japanese subtitle tracks.  Selecting all subtitles."
-			else
-				echo "Found \"Japanese\" subtitles"
-			fi
-		fi
-	fi
 
+selectAudio=""
+if [ ${ANIME} -eq 1 ]; then
+	selectAudio='.tags.language == ("eng") or .tags.language == ("jpn")'
+	echo "Selecting English and Japanese audio/subtitle tracks."
 elif [ ${KOREAN} -eq 1 ]; then
+	selectAudio='.tags.language == ("eng") or .tags.language == ("kor")'
         echo "Selecting English and Korean audio/subtitle tracks."
-        SELECTEDAUDIO=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("kor"))]' <<< "${AUDIOFFPROBE}")
-        if [ "${UNTAGGEDSUBJSON}" = 'true' ]; then
-                if [ "${EMPTYSUBJSON}" = 'true' ]; then
-                        echo "No subtitle track"
-                else
-                        SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "${SUBFFPROBE}")
-                fi
-        else
-		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx") or .tags.language == ("enm"))]' <<< "${SUBFFPROBE}")
-        fi
 elif [ ${CHINESE} -eq 1 ]; then
+	selectAudio='.tags.language == ("eng") or .tags.language == ("chi") or .tags.language == ("zho")'
         echo "Selecting English and Chinese audio/subtitle tracks."
-	SELECTEDAUDIO=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("chi") or .tags.language == ("zho"))]' <<< "${AUDIOFFPROBE}")
-        if [ "${UNTAGGEDSUBJSON}" = 'true' ]; then
-                if [ "${EMPTYSUBJSON}" = 'true' ]; then
-                        echo "No subtitle track"
-                else
-                        SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "${SUBFFPROBE}")
-                fi
-        else
-                SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx") or .tags.language == ("enm"))]' <<< "${SUBFFPROBE}")
-        fi
 else
+	selectAudio='.tags.language == ("eng")'
 	echo "Selecting English audio/subtitle tracks."
-        SELECTEDAUDIO=$(jq -r '[.streams[] | select(.tags.language == ("eng"))]' <<< "${AUDIOFFPROBE}")
-        if [ "${UNTAGGEDSUBJSON}" = 'true' ]; then
-        	if [ "${EMPTYSUBJSON}" = 'true' ]; then
-			echo "No subtitle track"
-		else
-			SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "${SUBFFPROBE}")
-		fi
+fi
+SELECTEDAUDIO=$(jq -r --arg langs "${selectAudio}" '[.streams[] | select($langs)]' <<< "${AUDIOFFPROBE}")
+if [ "${UNTAGGEDSUBJSON}" = 'true' ]; then
+	if [ "${EMPTYSUBJSON}" = 'true' ]; then
+		echo "No subtitle track"
 	else
-		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx"))]' <<< "${SUBFFPROBE}")
+		SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "${SUBFFPROBE}")
+	fi
+else
+	SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("zxx") or .tags.language == ("enm"))]' <<< "${SUBFFPROBE}")
+	EMPTYSELECTEDSUBJSON=$(jq -e '.[] | length == 0' <<< "${SELECTEDSUBS}")
+	if [ "${EMPTYSELECTEDSUBJSON}" = 'true' ]; then
+		echo "No English subtitle tracks found.  Looking for mistagged \"Japanese\" tracks"
+		SELECTEDSUBS=$(jq -r '[.streams[] | select(.tags.language == ("jpn"))]' <<< "${SUBFFPROBE}")
+		EMPTYSELECTEDSUBJSON=$(jq -e '.[] | length == 0' <<< "${SELECTEDSUBS}")
+		if [ "${EMPTYSELECTEDSUBJSON}" = 'true' ]; then
+			SELECTEDSUBS=$(jq -r '[.streams[]]' <<< "${SUBFFPROBE}")
+			echo "Did not find English.  Selecting all subtitles."
+		else
+			echo "Found \"English\" subtitles"
+		fi
 	fi
 fi
 
