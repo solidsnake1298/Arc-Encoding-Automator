@@ -144,12 +144,12 @@ while read file; do
                 -hwaccel_output_format qsv \
 		-extra_hw_frames 40 \
                 -i "${inputFile}" \
-		-map 0:v:0 \
+                -filter_complex "[0]${FILTERS}[vOut]" \
+		-map ["vOut"]:v \
                 -c:v av1_qsv \
                 -q:v 22 \
                 -preset veryslow \
                 -look_ahead_depth 40 \
-                -vf "${FILTERS}" \
                 -map_chapters 0 \
 		${audioCommand} \
 		${subCommand} \
@@ -187,7 +187,7 @@ fi
 }
 
 # Only remuxes tracks with selected languages
-remuxOnly () {
+audioRemuxOnly () {
         local audioCommand=$(audioMapping)
         local subCommand=$(subMapping)
                 
@@ -222,62 +222,7 @@ while read file; do
                 -avoid_negative_ts disabled \
                 "${outputFile}" < /dev/null
         EXITCODE=$?
-	checkExitCode "remuxOnly"
-done <<< "${CHAPTERFILES}"
-
-# Rechecks chapters, but only if present in input file
-# Duration can shift slightly during encoding, which causes the last chapter
-# to, potentially, end after the duration.
-if [ ${BADCHAPTER} -ne 0 ]; then
-        echo "Rechecking output file chapters"
-        BADCHAPTER=$(checkChapters "${outputFile}")
-        if [ ${BADCHAPTER} -gt 1 ]; then
-                newOutputFile=$(echo ${outputFile} | sed 's/.mkv/-chapterFix.mkv/g')
-                echo "Output file has bad chapters.  Duration can change slightly during encoding, triggering this issue."
-                repairChapters "${outputFile}" "${newOutputFile}"
-                mv "${newOutputFile}" "${outputFile}"
-        else
-                echo "All chapters valid in output file"
-        fi
-fi
-}
-
-audioConversionOnly () {
-        local audioCommand=$(audioMapping)
-        local subCommand=$(subMapping)
-                
-while read file; do
-	echo "Converting audio only for ${INPUTFILE}"
-        inputFile="${file}"
-        if [ -z ${CHAPTERSEPISODE} ] && [ -z ${STARTCHAP} ] && [ -z ${ENDCHAP} ]; then
-                outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-all.mkv/g")
-        elif [[ "${EMPTYCHAPTERPROBE}" == "true" ]]; then
-                outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-all.mkv/g")
-        else
-                inputFile=$(echo ${WIP}/${inputFile})
-                startChapter=$(echo ${inputFile} | awk -F '/' '{print $NF}' | awk -F '-' '{print $1}')
-                endChapter=$(echo ${inputFile} | awk -F '/' '{print $NF}' | awk -F '-' '{print $2}')
-                outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-${startChapter}-${endChapter}.mkv/g")
-        fi
-        ffmpeg \
-                -y \
-                -hide_banner \
-                -stats \
-                -fflags +genpts+igndts \
-                -v error \
-                -i "${inputFile}" \
-                -map_chapters 0 \
-                -map 0:v:0 \
-                -c:v copy \
-                ${audioCommand} \
-                ${subCommand} \
-                -disposition:s 0 \
-                -max_muxing_queue_size 2048 \
-                -max_interleave_delta 0 \
-                -avoid_negative_ts disabled \
-                "${outputFile}" < /dev/null
-        EXITCODE=$?
-	checkExitCode "audioConversionOnly"
+	checkExitCode "audioRemuxOnly"
 done <<< "${CHAPTERFILES}"
 
 # Rechecks chapters, but only if present in input file
@@ -645,25 +590,6 @@ chapterSelect () {
 	checkExitCode "ChapterSelect $startChapter $endChapter"
 }
 
-progressiveInInterlaced () {
-	videoToSplit=$1
-	height=$2
-	width=$3
-	frameRate=$4
-	pixFmt=$5
-
-	echo "Splitting raw video by field and rejoining as progressive"
-	ffmpeg -v error -y -stats -i "${videoToSplit}" -filter_complex "[0]il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i" -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -f rawvideo "rejoined.yuv" < /dev/null
-	EXITCODE=$?
-        checkExitCode "progressiveInInterlaced"
-	echo "Muxing rejoined raw video with original audio, subtitles, attachments, and metadata"
-	ffmpeg -v error -y -stats -video_size ${width}x${height} -pixel_format ${pixFmt} -framerate ${frameRate} -i "rejoined.yuv" -i "${videoToSplit}" -map 0:v -map 1:a -map 1:s? -map 1:t? -map_metadata 1 -map_chapters 1 -codec copy -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${WIP}/finalRejoinedVideo.mkv" < /dev/null
-        EXITCODE=$?
-        checkExitCode "progressiveInInterlaced"
-	echo "Replacing WIP file with new file"
-	mv "${WIP}/finalRejoinedVideo.mkv" "${videoToSplit}"
-}
-
 # Generates filter based on results of probe
 generateFilters () {
 	if [ ${setSar} -eq 1 ]; then 
@@ -671,8 +597,8 @@ generateFilters () {
 	else 
 		sar=""
 	fi
-	if [ ${setHWDL} -eq 1 ] && [ ${setDetelecine} -eq 1 ]; then
-		hwDownload="hwdownload,format=${inputFormat},"
+	if [ ${setHWDL} -eq 1 ]; then
+		hwDownload="hwdownload,"
 	else
 		hwDownload=""
 	fi
@@ -687,7 +613,8 @@ generateFilters () {
 		inFormat=""
 	fi
 	if [ ${setDetelecine} -eq 1 ]; then 
-		detelecine="dejudder,fps=${frameRate},fieldmatch=mode=pc_n_ub:combmatch=full:combpel=70,decimate,"
+		#detelecine="dejudder,fps=${frameRate},fieldmatch=mode=pc_n_ub:combmatch=full:combpel=70,decimate,"
+		detelecine="pullup,dejudder,"
 	else
 		detelecine=""
 	fi   
@@ -705,7 +632,12 @@ generateFilters () {
 	else
 		scale="scale_qsv=format=p010le"
 	fi
-	echo "${hwDownload}${inFormat}${detelecine}${hwUpload}${deinterlace}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,${sar}${scale}"
+	if [ ${setProgInInterlaced} -eq 1 ]; then
+		progInInterlaced="il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i[rejoined];[rejoined]"
+	else
+		progInInterlaced=""
+	fi
+	echo "${hwDownload}${inFormat}${progInInterlaced}${detelecine}${hwUpload}${deinterlace}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,${sar}${scale}"
 }
 
 # Probes file and generates video filters parameters
@@ -728,6 +660,7 @@ generateFilterParameters () {
 	setSar=0
 	setScale=0
 	setFramerate=0
+	setProgInInterlaced=0
 
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
@@ -883,10 +816,9 @@ generateFilterParameters () {
 		if [ ${largestProg} -ge 5 ] || [ ${FORCEDETELECINE} -ne 0 ]; then
 			if [[ ( ${largestProg} -ge 30   &&  ${repeatRatioNeither} -ge 50 ) || ( ${FORCEDETELECINE} -eq 3 && ${FORCEDETELECINE} -ne 2 && ${FORCEDETELECINE} -ne 1 ) ]]; then
                                 echo "Progressive video with interlaced encoding detected"
-                                progressiveInInterlaced "${remuxOutputFile}" "${height}" "${width}" "${frameRate}" "${inputBitDepth}"
+				echo "Will split fields and rejoin as progressive during encoding"
+				setProgInInterlaced=1
                                 FRAMERATE="-fps_mode passthrough"
-				setHWDL=0
-                                decodeAccel=""
                                 setDeinterlace="0"
 			elif [[ (( ${TFFRatio} -ge 30 || ${BFFRatio} -ge 30 ) && ${repeatRatioSum} -le ${repeatRatioNeither} ) || ( ${FORCEDETELECINE} -eq 1 && ${FORCEDETELECINE} -ne 2 && ${FORCEDETELECINE} -ne 3 ) ]]; then
 				echo "Telecine detected, likely 24fps/48fps in 30fps/60fps"
@@ -1219,13 +1151,13 @@ fi
 
 if [ ${ENGLISHSELECTION} -eq 1 ]; then
 	echo "Remux + English audio/subtitle selection only"
-	remuxOnly
+	audioRemuxOnly
 elif [ ${AUDIOCONVERSION} -eq 1 ] || [ "${AV1PROBE}" != "[]" ]; then
 	if [ "${AV1PROBE}" != "[]" ]; then
 		echo "Video codec is already AV1"
 	fi
 	echo "Converting audio only"
-	audioConversionOnly
+	audioRemuxOnly
 else
 	echo "Generating video filter parameters"
 	generateFilterParameters
