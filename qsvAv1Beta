@@ -407,7 +407,6 @@ subMapping () {
                 done <<< "$(jq '.streams[].index' <<< "${ATTACHMENTFFPROBE}")")
 	fi
         echo "${SUBCOMMAND} ${ATTACHMENTCOMMAND}"
-
 }
 
 # Extracts chapter data from input file.
@@ -505,7 +504,6 @@ generateFilters () {
 		inFormat=""
 	fi
 	if [ ${setDetelecine} -eq 1 ]; then 
-		#detelecine="dejudder,fps=${frameRate},fieldmatch=mode=pc_n_ub:combmatch=full:combpel=70,decimate,"
 		detelecine="pullup,dejudder,"
 	else
 		detelecine=""
