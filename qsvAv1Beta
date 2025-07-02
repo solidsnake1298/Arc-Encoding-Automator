@@ -251,48 +251,28 @@ audioMapping () {
 		FINALAUDIO=$(jq -r '[.streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
 		SELECTEDAUDIO=$(jq -r '[.streams.[]]' <<< "${AUDIOFFPROBE}")
 	else
-		losslessENG=$(jq -r '.[] | select(.tags.language == ("eng"))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
-		codec=$(echo ${losslessENG} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
-		if [ ! -z "${lossless}" ]; then 
-			echo "Finding lossless English audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
-			codec=$(echo ${losslessENG} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
-			if [ ! -z "`echo ${codec} | grep -i dts`" ]; then 
-				FINALAUDIOENG=$(jq -r '.[] | select((.profile | values | startswith("DTS-HD MA")) and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-				echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
-			elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then 
-				FINALAUDIOENG=$(jq -r '.[] | select(.codec_name == ("truehd") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-				echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
-			elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then 
-				FINALAUDIOENG=$(jq -r '.[] | select(.codec_name == ("flac") and .tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-				echo "Found FLAC audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
-			fi   
-		else 
-			FINALAUDIOENG=$(jq -r '.[] | select(.tags.language == ("eng")) | .index' <<< "${SELECTEDAUDIO}")
-			echo "No lossless English tracks found" 1>&2 | tee /dev/tty /dev/stderr
-		fi
-
-		if [ ${ANIME} -ne 0 ] || [ ${KOREAN} -ne 0 ] || [ ${CHINESE} -ne 0 ]; then
-			losslessForeign=$(jq -r --arg langs "${foreignAudio}" '.[] | select(.tags.language == ($langs))' <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
-			codec=$(echo ${losslessForeign} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
-			if [ ! -z "${losslessForeign}" ]; then
-				echo "Finding lossless non-English audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
-				codec=$(echo ${losslessForeign} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
-				if [ ! -z "`echo ${codec} | grep -i dts`" ]; then
-					FINALAUDIOFOREIGN=$(jq -r --arg langs "${foreignAudio}" '.[] | select((.profile | values | startswith("DTS-HD MA")) and .tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found DTS HD Master Audio track.  Ignoring other non-English tracks" 1>&2 | tee /dev/tty /dev/stderr
-				elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then
-					FINALAUDIOFOREIGN=$(jq -r --arg langs "${foreignAudio}" '.[] | select(.codec_name == ("truehd") and .tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found Dolby TrueHD audio track.  Ignoring other non-English tracks" 1>&2 | tee /dev/tty /dev/stderr
-				elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then
-					FINALAUDIOFOREIGN=$(jq -r --arg langs "${foreignAudio}" '.[] | select(.codec_name == ("flac") and .tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found FLAC audio track.  Ignoring other non-English tracks" 1>&2 | tee /dev/tty /dev/stderr
-				fi
-			else
-				FINALAUDIOFOREIGN=$(jq -r --arg langs "${foreignAudio}" '.[] | select(.tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
-				echo "No lossless foreign tracks found" 1>&2 | tee /dev/tty /dev/stderr
+		for lang in ${audioLanguages}; do
+			lossless=$(jq -r --arg langs "${lang}" '.[] | select(.tags.language == ($langs))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
+			codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
+			if [ ! -z "${lossless}" ]; then 
+				echo "Finding lossless ${lang} audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
+				codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
+				if [ ! -z "`echo ${codec} | grep -i dts`" ]; then 
+					finalAudio=$(jq -r --arg langs "${lang}" '.[] | select((.profile | values | startswith("DTS-HD MA")) and .tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
+					echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
+				elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then 
+					finalAudio=$(jq -r --arg langs "${lang}" '.[] | select(.codec_name == ("truehd") and .tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
+					echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
+				elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then 
+					finalAudio=$(jq -r --arg langs "${lang}" '.[] | select(.codec_name == ("flac") and .tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
+					echo "Found FLAC audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
+				fi   
+			else 
+				finalAudio=$(jq -r --arg langs "${lang}" '.[] | select(.tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
+				echo "No lossless ${lang} tracks found" 1>&2 | tee /dev/tty /dev/stderr
 			fi
-		fi
-		FINALAUDIO="${FINALAUDIOENG} ${FINALAUDIOFOREIGN}"
+			FINALAUDIO="${FINALAUDIO} ${finalAudio}"
+		done
 	fi
 	# Catches edge cases where audio selection logic fails
 	if [ -z "${FINALAUDIO}" ]; then
@@ -384,14 +364,14 @@ subMapping () {
         else
 		echo "Extracting fonts used by selected ASS tracks" 1>&2 | tee /dev/tty /dev/stderr
 		# When there are fonts, pulls in ASS sub style lines from the tracks selected
-		while read subIndex ; do
+		for subIndex in `jq '.[].index' <<< "${SELECTEDSUBS}"`; do
 			index=$(awk "BEGIN {print ${subIndex} - ${firstTrack}}" | bc)
 			isSubASS=$(jq --arg l ${index} '.streams[$l|fromjson] | select(.codec_name == ("ass"))' <<< ${SUBFFPROBE} | jq -e '. | length != 0')
 			if [ "${isSubASS}" = 'true' ]; then
 				newFonts=$(ffmpeg -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass - | egrep "^Style:" | awk -F ':' '{print $2}' | awk -F ',' '{print $2}')
 				fonts+="${newFonts}"
 			fi
-		done <<< "$(jq '.[].index' <<< "${SELECTEDSUBS}")"
+		done
 		echo "Dumping attachments and dropping unused fonts" 1>&2 | tee /dev/tty /dev/stderr
                 uniqueFonts=$(echo -e "${fonts}" | sort | uniq)
                 ATTACHMENTCOMMAND=$(while read attachmentIndex ; do
@@ -973,15 +953,21 @@ else
 	CHAPTERFILES=$(echo "${remuxOutputFile}")
 fi
 
+audioLanguages="eng"
+
 foreignAudio=""
 if [ ${ANIME} -eq 1 ]; then
 	foreignAudio="jpn"
+	audioLanguages+=" jpn"
 	echo "Selecting English and Japanese audio/subtitle tracks."
 elif [ ${KOREAN} -eq 1 ]; then
 	foreignAudio="kor"
+	audioLanguages+=" kor"
         echo "Selecting English and Korean audio/subtitle tracks."
 elif [ ${CHINESE} -eq 1 ]; then
 	foreignAudio="chi"
+	audioLanguages+=" chi"
+	audioLanguages+=" zho"
         echo "Selecting English and Chinese audio/subtitle tracks."
 else
 	echo "Selecting English audio/subtitle tracks."
