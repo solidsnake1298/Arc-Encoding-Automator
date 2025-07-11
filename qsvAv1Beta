@@ -98,7 +98,7 @@ checkExitCode () {
 		echo "Encode completed successfully."
 		# WIP cleanup
 		echo "Cleaning up WIP files/folders"
-		#rm -f "${remuxOutputFile}"
+		rm -f "${remuxOutputFile}"
 		rm -rf "${WIP}"
 		exit 0
 	elif [ $EXITCODE -eq -2 ]; then
@@ -831,8 +831,7 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
                 if [ ${BADCHAPTER} -gt 1 ]; then
                         repairChapters "${INPUTFILE}" "${remuxOutputFile}"
                 else
-                        #ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
-                        ffmpeg -v error -stats -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
+                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
                 fi
         elif [ "${NOEIA608}" = 'false' ]; then
                 echo "Remuxing to MKV and converting EIA608 subs"
