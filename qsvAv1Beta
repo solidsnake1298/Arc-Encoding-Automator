@@ -98,7 +98,7 @@ checkExitCode () {
 		echo "Encode completed successfully."
 		# WIP cleanup
 		echo "Cleaning up WIP files/folders"
-		rm -f "${remuxOutputFile}"
+		#rm -f "${remuxOutputFile}"
 		rm -rf "${WIP}"
 		exit 0
 	elif [ $EXITCODE -eq -2 ]; then
@@ -483,8 +483,20 @@ generateFilters () {
 	else
 		inFormat=""
 	fi
-	if [ ${setDetelecine} -eq 1 ]; then 
-		detelecine="pullup,dejudder,"
+	if [ ${setDetelecine} -eq 1 ]; then
+		if [ ${frameRateDenom} -ne 1 ]; then 
+			frameRateInt=$(printf "%.0f" `awk "BEGIN {print (( ${frameRateNum} + 1 ) / ${frameRateDenom})}"`)
+			newFrameRateInt=$(printf "%.0f" `awk "BEGIN {print (( ${newFrameRateNum} + 1 ) / ${frameRateDenom})}"`)
+		else
+			frameRateInt=${frameRateNum}
+			newFrameRateInt=${newFrameRateNum}
+		fi   
+		if [ ${frameRateInt} -ge 48 ]; then
+			dejudderValue=20
+		else
+			dejudderValue=4
+		fi
+		detelecine="pullup,dejudder=${dejudderValue},"
 	else
 		detelecine=""
 	fi   
@@ -517,8 +529,8 @@ generateFilterParameters () {
 	rawParams=$(ffprobe -v error -i "${inputFile}" -select_streams v:0 -show_entries streams)
 	interlaced=$(echo ${rawParams} | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}' | head -1)
 	videoLanguageTag=$(echo ${rawParams} | grep -o '')
-	frameRateNum=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $1}' | head -1)
-	frameRateDenom=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $2}' | head -1)
+	frameRateNum=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $1}' | head -1 | bc)
+	frameRateDenom=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $2}' | head -1 | bc)
 	frameRate="${frameRateNum}/${frameRateDenom}"
 	numOfFrames=$(echo -e "${rawParams}" | egrep 'NUMBER_OF_FRAMES|nb_frames' | grep -v "N\/A" | grep "=" | awk -F '=' '{print $2}' | head -1)
 	inputBitDepth=$(echo ${rawParams} | grep -o 'pix_fmt=[a-z,0-9]\+' | awk -F '=' '{print $2}' | head -1)
@@ -627,9 +639,6 @@ generateFilterParameters () {
         fi
 
 	if [ ${setDeinterlace} -eq 1 ] || [ ${FORCEDETELECINE} -ne 0 ]; then
-		setHWUL=1
-		setHWDL=1
-		setInFormat=1
 		if [ ${FORCEDETELECINE} -eq 0 ]; then
 			echo "Detected interlaced video, checking for telecine"
 			if [ "${numOfFrames}" == "" ]; then
@@ -685,6 +694,9 @@ generateFilterParameters () {
 		fi
 
 		if [ ${largestProg} -ge 5 ] || [ ${FORCEDETELECINE} -ne 0 ]; then
+			setHWDL=1
+			setULDL=1
+			setInFormat=1
 			if [[ ( ${largestProg} -ge 30   &&  ${repeatRatioNeither} -ge 50 ) || ( ${FORCEDETELECINE} -eq 3 && ${FORCEDETELECINE} -ne 2 && ${FORCEDETELECINE} -ne 1 ) ]]; then
                                 echo "Progressive video with interlaced encoding detected"
 				echo "Will split fields and rejoin as progressive during encoding"
@@ -819,7 +831,8 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
                 if [ ${BADCHAPTER} -gt 1 ]; then
                         repairChapters "${INPUTFILE}" "${remuxOutputFile}"
                 else
-                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
+                        #ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
+                        ffmpeg -v error -stats -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
                 fi
         elif [ "${NOEIA608}" = 'false' ]; then
                 echo "Remuxing to MKV and converting EIA608 subs"
@@ -838,7 +851,7 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
                 if [ ${BADCHAPTER} -gt 1 ]; then
                         repairChapters "${INPUTFILE}" "${remuxOutputFile}"
                 else
-                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
+                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
                 fi
         else
                 echo "Remuxing to MKV"
@@ -847,7 +860,7 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
                 if [ ${BADCHAPTER} -gt 1 ]; then
                         repairChapters "${INPUTFILE}" "${remuxOutputFile}"
                 else
-                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
+                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
                 fi
         fi
 else
@@ -857,7 +870,7 @@ else
         if [ ${BADCHAPTER} -gt 1 ]; then
                 repairChapters "${INPUTFILE}" "${remuxOutputFile}"
         else
-                ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
+                ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
         fi
 fi
 
