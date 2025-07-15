@@ -695,7 +695,7 @@ generateFilterParameters () {
 
 		if [ ${largestProg} -ge 5 ] || [ ${FORCEDETELECINE} -ne 0 ]; then
 			setHWDL=1
-			setULDL=1
+			setHWUL=1
 			setInFormat=1
 			if [[ ( ${largestProg} -ge 30   &&  ${repeatRatioNeither} -ge 50 ) || ( ${FORCEDETELECINE} -eq 3 && ${FORCEDETELECINE} -ne 2 && ${FORCEDETELECINE} -ne 1 ) ]]; then
                                 echo "Progressive video with interlaced encoding detected"
