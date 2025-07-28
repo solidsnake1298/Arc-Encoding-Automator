@@ -821,6 +821,12 @@ repairChapters () {
 	checkExitCode "repairChapters"
 }
 
+fixSubtitlesTimestamps () {
+	LENGTH=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
+	ffmpeg -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass "${WIP}/${index}.ass"
+	lastTimestamp=$(egrep "Dialogue|Comment|Picture|Sound|Movie|Command" "${WIP}/${index}.ass")
+}
+
 initialRemux () {
 echo "Remuxing file to re-order tracks"
 if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]] || [[ "${ext}" == "m2ts" ]] || [ "${NOEIA608}" = 'false' ]; then
