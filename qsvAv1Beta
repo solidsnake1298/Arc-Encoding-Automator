@@ -508,7 +508,12 @@ generateFilters () {
 		fi
 	else
 		deinterlace=""
-	fi   
+	fi
+        if [ ${x} -eq 0 ] && [ ${y} -eq 0 ]; then
+                crop=""
+        else
+                crop="vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,"
+        fi
 	if [ ${setScale} -eq 1 ]; then 
 		scale="scale_qsv=w=${w_scale}:h=${h_scale}:mode=hq:format=p010le"
 	else
@@ -519,7 +524,7 @@ generateFilters () {
 	else
 		progInInterlaced=""
 	fi
-	echo "${hwDownload}${inFormat}${progInInterlaced}${detelecine}${hwUpload}${deinterlace}vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,${sar}${scale}"
+	echo "${hwDownload}${inFormat}${progInInterlaced}${detelecine}${hwUpload}${deinterlace}${crop}${sar}${scale}"
 }
 
 # Probes file and generates video filters parameters
@@ -563,25 +568,25 @@ generateFilterParameters () {
 	w1=$(echo ${rawCrop1} | awk -F ":" '{print $1}')
 	w2=$(echo ${rawCrop2} | awk -F ":" '{print $1}')
 	w3=$(echo ${rawCrop3} | awk -F ":" '{print $1}')
-	wSort=(${w1} ${w2} ${w3})
+	wSort=(${w1#-} ${w2#-} ${w3#-})
 	w=$(echo "${wSort[*]}" | sort -nr | head -n1)
 
 	h1=$(echo ${rawCrop1} | awk -F ":" '{print $2}')
 	h2=$(echo ${rawCrop2} | awk -F ":" '{print $2}')
 	h3=$(echo ${rawCrop3} | awk -F ":" '{print $2}')
-        hSort=(${h1} ${h2} ${h3})
+        hSort=(${h1#-} ${h2#-} ${h3#-})
         h=$(echo "${hSort[*]}" | sort -nr | head -n1)
 
 	x1=$(echo ${rawCrop1} | awk -F ":" '{print $3}')
 	x2=$(echo ${rawCrop2} | awk -F ":" '{print $3}')
 	x3=$(echo ${rawCrop3} | awk -F ":" '{print $3}')
-        xSort=(${x1} ${x2} ${x3})
+        xSort=(${x1#-} ${x2#-} ${x3#-})
         x=$(echo "${xSort[*]}" | sort -n | head -n1)
 
 	y1=$(echo ${rawCrop1} | awk -F ":" '{print $4}')
 	y2=$(echo ${rawCrop2} | awk -F ":" '{print $4}')
 	y3=$(echo ${rawCrop3} | awk -F ":" '{print $4}')
-        ySort=(${y1} ${y2} ${y3})
+        ySort=(${y1#-} ${y2#-} ${y3#-})
         y=$(echo "${ySort[*]}" | sort -n | head -n1)
 
 	IFS=$' \t\n'
@@ -616,20 +621,27 @@ generateFilterParameters () {
                 ratioDiff=${ratioDiff#-}
                 if [[ $(awk "BEGIN{print (${ratioDiff} < 0.2)}") -eq 1 ]]; then
                         echo "Altering dimensions to fix aspect ratio to ~4/3"
-                        setScale=1
                         h_scale=${h}
                         w_scale=$(printf "%.0f" `awk "BEGIN {print ${height} * 1.333}"`)
+			if [ ${w_scale} -ne ${width} ]; then
+				setScale=1
+			fi
                 # Edge case.  Sometimes DAR is set to 16:9 and dynamically calculating via SAR/DAR results in extra wide, stretched, video.
                 elif [[ $(awk "BEGIN{print (${ratioDiff} > 0.2)}") -eq 1 ]] && [[ $(awk "BEGIN{print (${darRatioDiff} < 0.05)}") -eq 1 ]]; then
                         echo "Altering dimension to fix aspect ratio to ~16/9"
-                        setScale=1
                         w_scale=${w}
                         h_scale=$(printf "%.0f" `awk "BEGIN {print ${width} / 1.777777778}"`)
+			if [ ${h_scale} -ne ${height} ]; then
+                        	setScale=1
+			fi
                 else
                         echo "Altering dimensions to fix aspect ratio, widescreen"
                         setScale=1
                         w_scale=${w}
                         h_scale=$(printf "%.0f" `awk "BEGIN {print ${width} / ${ratio}}"`)
+			if [ ${h_scale} -ne ${height} ]; then
+                        	setScale=1
+			fi
                 fi
         elif [ -z ${sar} ]; then
                 echo "SAR not set.  Setting to 1:1"
