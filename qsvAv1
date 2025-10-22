@@ -1,12 +1,16 @@
 #!/bin/bash
 
 ###########################
-# Assumes jellyfin-ffmpeg is installed and symlinked in /usr/bin.
+# Assumes jellyfin-${ffmpeg} is installed and symlinked in /usr/bin.
 # Most functions may work with vanilla ffmpeg, but may require additional Intel drivers.
-# Removing Dolby Vision function requires jellyfin-ffmpeg 7.0.2-4 and newer.
+# Removing Dolby Vision function requires jellyfin-${ffmpeg} 7.0.2-4 and newer.
 # Must have jq and bc installed.
 # User running this script must be in render group.  Requires user logout if added to group.
 ##########################
+
+# Provides absolute paths for ffmpeg/ffprobe.  More cron friendly.
+ffmpeg="/usr/lib/jellyfin-ffmpeg/ffmpeg"
+ffprobe="/usr/lib/jellyfin-ffmpeg/ffprobe"
 
 # Variable initialization.  Work-in-progress initialization and cleanup.
 INPUTFILE=""
@@ -15,6 +19,7 @@ CHAPSELECT=
 ANIME=0
 KOREAN=0
 CHINESE=0
+SPANISH=0
 FILTERS=""
 CHAPTERFILES=""
 FINALAUDIO=""
@@ -39,16 +44,17 @@ show_help() {
     echo "	-c NUMBER		For files with multiple episodes, but a consistent number of chapters"
     echo "				per episode, provide an integer and the input file will be split into multiple files"
     echo "				with the number of chapters specified in each file."
-    echo "	-s NUMBER(s)		Similar to -c, but can handle instances with one or more episodes have a different"
+    echo "	-C NUMBER(s)		Similar to -c, but can handle instances with one or more episodes have a different"
     echo "				number of chapters in the episode. Start and end chapters are colon separate, files"
     echo "				are comma separate."
-    echo "				Example: -s \"00:05,06:10,11:15,16:20,21:25,26:30,31:35,36:40,41:45,46:50,51:55,56:60,61:65,66:70\""
+    echo "				Example: -C \"00:05,06:10,11:15,16:20,21:25,26:30,31:35,36:40,41:45,46:50,51:55,56:60,61:65,66:70\""
     echo "				In this example the first episode has 6 chapters while the rest have 5."
     echo "	-w DIRECTORY_PATH	You can specify a directory that this script will use as a scratch/WIP directory."
     echo "				This is can help reduce disk I/O and make the file transfers much more sequential and, thus, faster."
     echo "	-a			If you wish to select Japanese language audio tracks, enable this option."
     echo "	-k			If you wish to select Korean language audio tracks, enable this option."
     echo "	-m			If you wish to select Chinese language audio tracks, enable this option.  This should select the most common dialets."
+    echo "	-s			If you wish to select Spanish language audio tracks, enable this option."
     echo "	-h			Disables hardware accelerated DEcoding.  Useful if the source video uses a codec I haven't added to the block list."
     echo "	-e			When this option is enabled the input file will be remuxed as well as English audio/subtitle selection."
     echo "				No encoding will occur.  Can be combined with a, k, and m."
@@ -61,21 +67,22 @@ show_help() {
 }
 
 # Reads input paramamters
-while getopts :t:i:c:s:w:akmheo option; do
-        case ${option} in
-                i) INPUTFILE=${OPTARG};;
-                c) CHAPTERSEPISODE=${OPTARG};;
-                a) ANIME=1;;
-                k) KOREAN=1;;
+while getopts :t:i:c:C:w:akmheos option; do
+    case ${option} in
+        i) INPUTFILE=${OPTARG};;
+        c) CHAPTERSEPISODE=${OPTARG};;
+        a) ANIME=1;;
+        k) KOREAN=1;;
 		m) CHINESE=1;;
-		s) CHAPSELECT=${OPTARG};;
+		s) SPANISH=1;;
+		C) CHAPSELECT=${OPTARG};;
 		h) NOHWADECODE=1;;
 		w) SCRATCHDIR=${OPTARG};;
 		e) ENGLISHSELECTION=1;;
 		o) AUDIOCONVERSION=1;;
 		t) FORCEDETELECINE=${OPTARG};;
 		h) show_help ; exit 0;;
-                \?) echo "Invalid option" ; show_help ; exit 1;;
+        \?) echo "Invalid option" ; show_help ; exit 1;;
 	esac
 done
 
@@ -127,7 +134,7 @@ av1Encode () {
                 endChapter=$(echo ${inputFile} | awk -F '/' '{print $NF}' | awk -F '-' '{print $2}')
                 outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-${startChapter}-${endChapter}.mkv/g")
         fi
-        ffmpeg \
+        ${ffmpeg} \
 		-y \
                 -init_hw_device vaapi=va:,driver=iHD,kernel_driver=i915 \
 		-hide_banner \
@@ -195,7 +202,7 @@ audioRemuxOnly () {
                 endChapter=$(echo ${inputFile} | awk -F '/' '{print $NF}' | awk -F '-' '{print $2}')
                 outputFile=$(echo ${INPUTFILE} | sed "s/.${ext}/-${startChapter}-${endChapter}.mkv/g")
         fi
-        ffmpeg \
+        ${ffmpeg} \
                 -y \
                 -hide_banner \
                 -stats \
@@ -358,7 +365,7 @@ subMapping () {
 			index=$(awk "BEGIN {print ${subIndex} - ${firstTrack}}" | bc)
 			isSubASS=$(jq --arg l ${index} '.streams[$l|fromjson] | select(.codec_name == ("ass"))' <<< ${SUBFFPROBE} | jq -e '. | length != 0')
 			if [ "${isSubASS}" = 'true' ]; then
-				newFonts=$(ffmpeg -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass - | egrep "^Style:" | awk -F ':' '{print $2}' | awk -F ',' '{print $2}')
+				newFonts=$(${ffmpeg} -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass - | egrep "^Style:" | awk -F ':' '{print $2}' | awk -F ',' '{print $2}')
 				fonts+="${newFonts}"
 			fi
 		done
@@ -367,7 +374,7 @@ subMapping () {
                 ATTACHMENTCOMMAND=$(while read attachmentIndex ; do
                         index=$(awk "BEGIN {print ${attachmentIndex} - ${firstAttachmentTrack}}" | bc)
                         fontFileName=$(jq --arg l ${index} '.streams[$l|fromjson].tags.filename' <<< ${ATTACHMENTFFPROBE})
-                        ffmpeg -v fatal -dump_attachment:t:${index} "${fontFileName}" -i "${INPUTFILE}"
+                        ${ffmpeg} -v fatal -dump_attachment:t:${index} "${fontFileName}" -i "${INPUTFILE}"
                         fontFullName=$(fc-scan "${fontFileName}" | egrep "family:|fullname:|postscriptname:" | awk -F ': ' '{print $2}')
                         fontPresent=$(egrep "${uniqueFonts//$'\n'/|}" <<< "${fontFullName}")
                         rm -f "${fontFileName}"
@@ -384,11 +391,11 @@ splitEpisodes () {
 	chapters=${1}
 	
 	# Probes videos for chapter information and prints to text file
-	chapterProbe=$(ffprobe -v error -i "${remuxOutputFile}" -print_format json -show_chapters)
+	chapterProbe=$(${ffprobe} -v error -i "${remuxOutputFile}" -print_format json -show_chapters)
 
         # Parses json file for the start time of each chapter.  Also counts number of chapters
         rawChapters=$(echo ${chapterProbe} | jq .chapters[].start_time | wc -l)
-        # ffmpeg chapters start at zero.  Subtracting 1 to align with last chapter.
+        # ${ffmpeg} chapters start at zero.  Subtracting 1 to align with last chapter.
         totalChapters=$(echo $((${rawChapters} - 1)) | bc)
 
 	i=0
@@ -412,9 +419,9 @@ splitEpisodes () {
 		echo "Writing file for chapters ${first} thru ${last}"
 		if [ ${ENGLISHSELECTION} -eq 1 ]; then
 			segmentFile=$(echo "${first}-${last}-${outputFile}.mkv")
-			ffmpeg -v error -stats -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -c:v copy ${audioCommand} ${subCommand} ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
+			${ffmpeg} -v error -stats -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -c:v copy ${audioCommand} ${subCommand} ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
 		else
-			ffmpeg -v error -stats -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
+			${ffmpeg} -v error -stats -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
 		fi
 		EXITCODE=$?
 		checkExitCode "splitEpisodes $first $last"
@@ -435,7 +442,7 @@ chapterSelect () {
 	endChapter=${2}
 
         # Probes videos for chapter information and prints to text file
-        chapterProbe=$(ffprobe -v error -i "${remuxOutputFile}" -print_format json -show_chapters)
+        chapterProbe=$(${ffprobe} -v error -i "${remuxOutputFile}" -print_format json -show_chapters)
 
         # Parses json file for the start time of each chapter.  Also counts number of chapters
         totalChapters=$(echo ${chapterProbe} | jq .chapters[].start_time | wc -l)
@@ -456,7 +463,7 @@ chapterSelect () {
 	
 	echo "Writing file for chapters ${startChapter} thru ${endChapter}"
                 
-        ffmpeg -v error -stats -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
+        ${ffmpeg} -v error -stats -y -fflags +genpts+igndts -i "${remuxOutputFile}" -map 0 -codec copy ${chapterTimestamp} -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${segmentFile}" < /dev/null
 	EXITCODE=$?
 	checkExitCode "ChapterSelect ${startChapter} ${endChapter}"
 }
@@ -530,8 +537,8 @@ generateFilters () {
 # Probes file and generates video filters parameters
 generateFilterParameters () {
 	inputFile=$1
-	# ffprobe to determine if interlaced.  If yes, set bwdif deinterlace filter.
-	rawParams=$(ffprobe -v error -i "${inputFile}" -select_streams v:0 -show_entries streams)
+	# ${ffprobe} to determine if interlaced.  If yes, set bwdif deinterlace filter.
+	rawParams=$(${ffprobe} -v error -i "${inputFile}" -select_streams v:0 -show_entries streams)
 	interlaced=$(echo ${rawParams} | grep -o 'field_order=[a-z]\+' | awk -F '=' '{print $2}' | head -1)
 	videoLanguageTag=$(echo ${rawParams} | grep -o '')
 	frameRateNum=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $1}' | head -1 | bc)
@@ -559,10 +566,10 @@ generateFilterParameters () {
 	        *) setDeinterlace=0;;
 	esac
 
-	# ffmpeg to detect black bars for cropping.
-	rawCrop1=$(ffmpeg -ss 0 -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
-	rawCrop2=$(ffmpeg -ss 300 -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
-	rawCrop3=$(ffmpeg -ss 1800 -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+	# ${ffmpeg} to detect black bars for cropping.
+	rawCrop1=$(${ffmpeg} -ss 0 -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+	rawCrop2=$(${ffmpeg} -ss 300 -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+	rawCrop3=$(${ffmpeg} -ss 1800 -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
 
 	IFS=$'\n'
 	w1=$(echo ${rawCrop1} | awk -F ":" '{print $1}')
@@ -660,7 +667,7 @@ generateFilterParameters () {
 			else
 				readFrames=3600
 			fi
-			rawIdet=$(ffmpeg -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${inputFile}" 2>&1 | egrep "Repeated Fields|frame detection" | tail -3)
+			rawIdet=$(${ffmpeg} -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${inputFile}" 2>&1 | egrep "Repeated Fields|frame detection" | tail -3)
 			idetProg1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
 			idetProg2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
 			idetTFF1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
@@ -752,13 +759,13 @@ generateFilterParameters () {
 }
 
 convertEIA608 () {
-	eiaTracks=$(ffprobe -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("eia_608")) | .index')
-	otherSubTracks=$(ffprobe -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name != ("eia_608")) | .index')
+	eiaTracks=$(${ffprobe} -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name == ("eia_608")) | .index')
+	otherSubTracks=$(${ffprobe} -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json | jq -r '.streams[] | select(.codec_name != ("eia_608")) | .index')
 	srtMKVFile=$(echo ${INPUTFILE} | awk -F '/' '{print $NF}' | sed "s/.${ext}/-subs.mkv/g")
 	mapEIATracks=$(for index in ${eiaTracks}; do
 		echo "-map 0:${index}"
 	done)
-	ffmpeg -v error -stats -y -i "${INPUTFILE}" -vn -an ${mapEIATracks} -c:s srt "${WIP}/${srtMKVFile}" < /dev/null
+	${ffmpeg} -v error -stats -y -i "${INPUTFILE}" -vn -an ${mapEIATracks} -c:s srt "${WIP}/${srtMKVFile}" < /dev/null
         EXITCODE=$?
         echo "$EXITCODE"
 	mapSubTracks=$(if [ -z ${otherSubTracks} ]; then
@@ -769,7 +776,7 @@ convertEIA608 () {
 			done
 			echo "-map 1:s"
 		fi)
-	ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -i "${WIP}/${srtMKVFile}" -codec copy -map_chapters 0 -map 0:v -map 0:a? ${mapSubTracks} -map 0:t? "${remuxOutputFile}" < /dev/null
+	${ffmpeg} -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -i "${WIP}/${srtMKVFile}" -codec copy -map_chapters 0 -map 0:v -map 0:a? ${mapSubTracks} -map 0:t? "${remuxOutputFile}" < /dev/null
         EXITCODE=$?
         echo "$EXITCODE"
 	rm -f "${WIP}/${srtMKVFile}"
@@ -778,12 +785,12 @@ convertEIA608 () {
 # Checks if end time for last chapter is after the video's duration
 checkChapters () {
 	inputFileCheck=$1
-	LENGTH=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
-	LASTCHAPTEREND=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	LASTCHAPTERSTART=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | grep start_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	CHAPTERCOUNT=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | jq -r ' .[].[].id' | wc -l)
+	LENGTH=$(${ffprobe} -loglevel error -i "${inputFileCheck}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
+	LASTCHAPTEREND=$(${ffprobe} -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	LASTCHAPTERSTART=$(${ffprobe} -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | grep start_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	CHAPTERCOUNT=$(${ffprobe} -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | jq -r ' .[].[].id' | wc -l)
 	SECONDLASTCHAPTERENDINDEX=$(awk "BEGIN {print ${CHAPTERCOUNT} - 1}" | bc)
-	SECONDLASTCHAPTEREND=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | jq -r --arg l ${SECONDLASTCHAPTERENDINDEX} '[.chapters[]].[$l|fromjson]' | grep end_time | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	SECONDLASTCHAPTEREND=$(${ffprobe} -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | jq -r --arg l ${SECONDLASTCHAPTERENDINDEX} '[.chapters[]].[$l|fromjson]' | grep end_time | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
 
 	if [ -z ${LASTCHAPTEREND} ]; then
 	        echo "${INPUTFILE} - No chapters present" 1>&2 | tee /dev/tty /dev/stderr
@@ -805,11 +812,11 @@ repairChapters () {
 	outputFileRepair=$2
 	CHAPTERS=${WIP}/chapters.txt
 	NEWCHAPTERS=${WIP}/newChapters.txt
-	LASTCHAPTER=$(ffprobe -loglevel error -i "${inputFileRepair}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	TIMEBASE=$(ffprobe -loglevel error -i "${inputFileRepair}" -print_format json -show_chapters | grep time_base | head -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
-	LENGTHMS=$(ffprobe -loglevel error -i "${inputFileRepair}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
+	LASTCHAPTER=$(${ffprobe} -loglevel error -i "${inputFileRepair}" -print_format json -show_chapters | grep end_time | tail -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	TIMEBASE=$(${ffprobe} -loglevel error -i "${inputFileRepair}" -print_format json -show_chapters | grep time_base | head -1 | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
+	LENGTHMS=$(${ffprobe} -loglevel error -i "${inputFileRepair}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
 
-	ffmpeg -v error -y -i "${inputFileRepair}" -f ffmetadata ${CHAPTERS} < /dev/null
+	${ffmpeg} -v error -y -i "${inputFileRepair}" -f ffmetadata ${CHAPTERS} < /dev/null
 	lastEnd=$(cat ${CHAPTERS} | grep "END=" | tail -1 | awk -F '=' '{print $2}')
 	lastStart=$(cat ${CHAPTERS} | grep "START=" | tail -1 | awk -F '=' '{print $2}')
 	LENGTHMS=$(awk "BEGIN {print ${LENGTHMS} * 1000}" | bc)
@@ -819,12 +826,12 @@ repairChapters () {
 			BADCHAPTER=3
 	fi
 	if [ ${BADCHAPTER} -eq 2 ]; then
-		ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${inputFileRepair}" -f ffmetadata -i ${CHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${outputFileRepair}" < /dev/null
+		${ffmpeg} -v error -y -stats -fflags +genpts+igndts -i "${inputFileRepair}" -f ffmetadata -i ${CHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${outputFileRepair}" < /dev/null
 		rm $CHAPTERS
 	elif [ ${BADCHAPTER} -eq 3 ]; then
-	        ffmpeg -v error -y -i "${inputFileRepair}" -f ffmetadata ${CHAPTERS} < /dev/null
+	        ${ffmpeg} -v error -y -i "${inputFileRepair}" -f ffmetadata ${CHAPTERS} < /dev/null
 	        cat ${CHAPTERS} | head -n -5 > ${NEWCHAPTERS}
-	        ffmpeg -v error -y -stats -fflags +genpts+igndts -i "${inputFileRepair}" -f ffmetadata -i ${NEWCHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${outputFileRepair}" < /dev/null
+	        ${ffmpeg} -v error -y -stats -fflags +genpts+igndts -i "${inputFileRepair}" -f ffmetadata -i ${NEWCHAPTERS} -map 0 -codec copy -map_metadata 1 -map_chapters 1 -max_muxing_queue_size 2048 -max_interleave_delta 0 -avoid_negative_ts disabled "${outputFileRepair}" < /dev/null
 		rm $CHAPTERS $NEWCHAPTERS
 	else
 		rm $CHAPTERS
@@ -834,8 +841,8 @@ repairChapters () {
 }
 
 fixSubtitlesTimestamps () {
-	LENGTH=$(ffprobe -loglevel error -i "${inputFileCheck}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
-	ffmpeg -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass "${WIP}/${index}.ass"
+	LENGTH=$(${ffprobe} -loglevel error -i "${inputFileCheck}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
+	${ffmpeg} -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass "${WIP}/${index}.ass"
 	lastTimestamp=$(egrep "Dialogue|Comment|Picture|Sound|Movie|Command" "${WIP}/${index}.ass")
 }
 
@@ -849,7 +856,7 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
                 if [ ${BADCHAPTER} -gt 1 ]; then
                         repairChapters "${INPUTFILE}" "${remuxOutputFile}"
                 else
-                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
+                        ${ffmpeg} -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
                 fi
         elif [ "${NOEIA608}" = 'false' ]; then
                 echo "Remuxing to MKV and converting EIA608 subs"
@@ -868,7 +875,7 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
                 if [ ${BADCHAPTER} -gt 1 ]; then
                         repairChapters "${INPUTFILE}" "${remuxOutputFile}"
                 else
-                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
+                        ${ffmpeg} -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
                 fi
         else
                 echo "Remuxing to MKV"
@@ -877,7 +884,7 @@ if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]]
                 if [ ${BADCHAPTER} -gt 1 ]; then
                         repairChapters "${INPUTFILE}" "${remuxOutputFile}"
                 else
-                        ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
+                        ${ffmpeg} -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
                 fi
         fi
 else
@@ -887,7 +894,7 @@ else
         if [ ${BADCHAPTER} -gt 1 ]; then
                 repairChapters "${INPUTFILE}" "${remuxOutputFile}"
         else
-                ffmpeg -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
+                ${ffmpeg} -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}" < /dev/null
         fi
 fi
 
@@ -901,10 +908,10 @@ ext=$(echo ${INPUTFILE} | awk -F '.' '{print $NF}')
 remuxOutputFile=""
 newExt=""
 
-SUBFFPROBE=$(ffprobe -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json)
+SUBFFPROBE=$(${ffprobe} -i "${INPUTFILE}" -select_streams s -show_entries stream -v quiet -of json)
 NOMOVTEXT=$(jq '[.streams[] | select(.codec_name == ("mov_text"))]' <<< ${SUBFFPROBE} | jq -e '. | length == 0')
 NOEIA608=$(jq '[.streams[] | select(.codec_name == ("eia_608"))]' <<< ${SUBFFPROBE} | jq -e '. | length == 0')
-NOMSMPEG=$(ffprobe -i "${INPUTFILE}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.codec_name == ("msmpeg4v3"))] | length == 0')
+NOMSMPEG=$(${ffprobe} -i "${INPUTFILE}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.codec_name == ("msmpeg4v3"))] | length == 0')
 shortFileName=$(echo $INPUTFILE | awk -F '/' '{print $NF}')
 
 # Checks if end time for last chapter is after the video's duration
@@ -913,11 +920,11 @@ BADCHAPTER=$(checkChapters "${INPUTFILE}")
 # Reorders tracks to account for weirdly ordered files.  Makes audio/sub selection more consistent.
 initialRemux
 
-# Get ffprobe info to be used by other functions.
-AUDIOFFPROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams a -show_entries stream -v quiet -of json)
-AV1PROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.codec_name == ("av1"))]')
-SUBFFPROBE=$(ffprobe -i "${remuxOutputFile}" -select_streams s -show_entries stream -v quiet -of json)
-ATTACHMENTFFPROBE=$(ffprobe -v error -i "${remuxOutputFile}" -select_streams t -show_entries stream=index -show_entries stream_tags=filename -of json)
+# Get ${ffprobe} info to be used by other functions.
+AUDIOFFPROBE=$(${ffprobe} -i "${remuxOutputFile}" -select_streams a -show_entries stream -v quiet -of json)
+AV1PROBE=$(${ffprobe} -i "${remuxOutputFile}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.codec_name == ("av1"))]')
+SUBFFPROBE=$(${ffprobe} -i "${remuxOutputFile}" -select_streams s -show_entries stream -v quiet -of json)
+ATTACHMENTFFPROBE=$(${ffprobe} -v error -i "${remuxOutputFile}" -select_streams t -show_entries stream=index -show_entries stream_tags=filename -of json)
 EMPTYAUDIOJSON=$(jq '[.streams[] | select(.tags.language == ("eng") or .tags.language == ("jpn"))]' <<< "${AUDIOFFPROBE}" | jq -e '. | length == 0')
 
 # Checks for subtitle track or untagged subtitle tracks.
@@ -927,7 +934,7 @@ UNTAGGEDSUBJSON=$(jq '[.streams[] | select(.tags.language)]' <<< "${SUBFFPROBE}"
 # Checks for attachments
 EMPTYATTACHMENTJSON=$(jq -e '.streams | length == 0' <<< "${ATTACHMENTFFPROBE}")
 
-SWDECODE=$(ffprobe -i "${remuxOutputFile}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.profile == ("High 10") or .profile == ("Advanced Simple Profile") or .codec_name == ("mpeg1video") or .codec_name == ("vp8") or .codec_name == ("vc1") or .codec_name == ("msmpeg4v3") or .codec_name == ("mpeg4") or .profile == ("High 4:2:2") or .profile == ("High 4:4:4 Predictive") or .codec_name == ("wmv2") or .codec_name == ("wmv3"))] | length != 0')
+SWDECODE=$(${ffprobe} -i "${remuxOutputFile}" -select_streams v -show_entries stream -v quiet -of json | jq '[.streams[] | select(.profile == ("High 10") or .profile == ("Advanced Simple Profile") or .codec_name == ("mpeg1video") or .codec_name == ("vp8") or .codec_name == ("vc1") or .codec_name == ("msmpeg4v3") or .codec_name == ("mpeg4") or .profile == ("High 4:2:2") or .profile == ("High 4:4:4 Predictive") or .codec_name == ("wmv2") or .codec_name == ("wmv3"))] | length != 0')
 
 if [[ "${SWDECODE}" == "true" ]]; then
 	echo "Disabling hardware accelerated decoding"
@@ -959,12 +966,16 @@ if [ ${ANIME} -eq 1 ]; then
 elif [ ${KOREAN} -eq 1 ]; then
 	foreignAudio="kor"
 	audioLanguages+=" kor"
-        echo "Selecting English and Korean audio/subtitle tracks."
+	echo "Selecting English and Korean audio/subtitle tracks."
 elif [ ${CHINESE} -eq 1 ]; then
 	foreignAudio="chi"
 	audioLanguages+=" chi"
 	audioLanguages+=" zho"
-        echo "Selecting English and Chinese audio/subtitle tracks."
+	echo "Selecting English and Chinese audio/subtitle tracks."
+elif [ ${SPANISH} -eq 1 ]; then
+	foreignAudio="spa"
+	audioLanguages+=" spa"
+	echo "Selecting English and Chinese audio/subtitle tracks."
 else
 	echo "Selecting English audio/subtitle tracks."
 fi
@@ -1006,8 +1017,8 @@ subCommand=$(subMapping)
 # If -s is used, it will loop through the segments provided to extract the episodes based on chapter numbers provided.
 # The segments start and end are colon sepearate, episodes are comma separated.
 if [ ! -z ${CHAPTERSEPISODE} ]; then
-        chapterProbe=$(ffprobe -v error -i "${remuxOutputFile}" -print_format json -show_chapters)
-        EMPTYCHAPTERPROBE=$(ffprobe -v error -i "${remuxOutputFile}" -print_format json -show_chapters | jq -r '.[] | length == 0')
+        chapterProbe=$(${ffprobe} -v error -i "${remuxOutputFile}" -print_format json -show_chapters)
+        EMPTYCHAPTERPROBE=$(${ffprobe} -v error -i "${remuxOutputFile}" -print_format json -show_chapters | jq -r '.[] | length == 0')
         if [[ "${EMPTYCHAPTERPROBE}" != "true" ]]; then
                 echo "Splitting file in ${CHAPTERSEPISODE} chapter segments"
                 splitEpisodes ${CHAPTERSEPISODE}
@@ -1016,8 +1027,8 @@ if [ ! -z ${CHAPTERSEPISODE} ]; then
                 CHAPTERFILES=$(echo "${remuxOutputFile}")
         fi
 elif [ ! -z ${CHAPSELECT} ]; then
-        chapterProbe=$(ffprobe -v error -i "${remuxOutputFile}" -print_format json -show_chapters)
-        EMPTYCHAPTERPROBE=$(ffprobe -v error -i "${remuxOutputFile}" -print_format json -show_chapters | jq -r '.[] | length == 0')
+        chapterProbe=$(${ffprobe} -v error -i "${remuxOutputFile}" -print_format json -show_chapters)
+        EMPTYCHAPTERPROBE=$(${ffprobe} -v error -i "${remuxOutputFile}" -print_format json -show_chapters | jq -r '.[] | length == 0')
         if [[ "${EMPTYCHAPTERPROBE}" != "true" ]]; then
                 echo "Using user provided start/end chapters."
                 segments=$(echo ${CHAPSELECT} | sed 's/,/ /g')
