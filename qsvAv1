@@ -12,6 +12,16 @@
 ffmpeg="/usr/lib/jellyfin-ffmpeg/ffmpeg"
 ffprobe="/usr/lib/jellyfin-ffmpeg/ffprobe"
 
+# Checks if this script is run via user prompt or cron.
+OUTPROMPT=""
+tty -s
+isTTY=$?
+if [ $isTTY -eq 0 ]; then
+	OUTPROMPT="/dev/tty /dev/stderr"
+else
+	OUTPROMPT="/dev/null"
+fi
+
 # Variable initialization.  Work-in-progress initialization and cleanup.
 INPUTFILE=""
 CHAPTERSEPISODE=
@@ -244,36 +254,36 @@ audioMapping () {
 	# checks if audio.json is empty due to untagged streams
 	# if lossless tracks are present, ignore lossy tracks
 	if [ "${EMPTYAUDIOJSON}" = 'true' ]; then 
-		echo "Selected audio returned no results.  Selecting all audio tracks." 1>&2 | tee /dev/tty /dev/stderr
+		echo "Selected audio returned no results.  Selecting all audio tracks." 1>&2 | tee ${OUTPROMPT}
 		FINALAUDIO=$(jq -r '[.streams.[]] | .[] | .index' <<< "${AUDIOFFPROBE}")
 		SELECTEDAUDIO=$(jq -r '[.streams.[]]' <<< "${AUDIOFFPROBE}")
 	else
 		for lang in ${audioLanguages}; do
 			lossless=$(jq -r --arg langs "${lang}" '.[] | select(.tags.language == ($langs))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
 			codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
+			echo "Finding lossless ${lang} audio tracks, if any" 1>&2 | tee ${OUTPROMPT}
 			if [ ! -z "${lossless}" ]; then 
-				echo "Finding lossless ${lang} audio tracks, if any" 1>&2 | tee /dev/tty /dev/stderr
 				codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 				if [ ! -z "`echo ${codec} | grep -i dts`" ]; then 
 					finalAudio=$(jq -r --arg langs "${lang}" '.[] | select((.profile | values | startswith("DTS-HD MA")) and .tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
+					echo "Found DTS HD Master Audio track.  Ignoring other English tracks" 1>&2 | tee ${OUTPROMPT}
 				elif [ ! -z "`echo ${codec} | grep -i truehd`" ]; then 
 					finalAudio=$(jq -r --arg langs "${lang}" '.[] | select(.codec_name == ("truehd") and .tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
+					echo "Found Dolby TrueHD audio track.  Ignoring other English tracks" 1>&2 | tee ${OUTPROMPT}
 				elif [ ! -z "`echo ${codec} | grep -i flac`" ]; then 
 					finalAudio=$(jq -r --arg langs "${lang}" '.[] | select(.codec_name == ("flac") and .tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
-					echo "Found FLAC audio track.  Ignoring other English tracks" 1>&2 | tee /dev/tty /dev/stderr
+					echo "Found FLAC audio track.  Ignoring other English tracks" 1>&2 | tee ${OUTPROMPT}
 				fi   
 			else 
 				finalAudio=$(jq -r --arg langs "${lang}" '.[] | select(.tags.language == ($langs)) | .index' <<< "${SELECTEDAUDIO}")
-				echo "No lossless ${lang} tracks found" 1>&2 | tee /dev/tty /dev/stderr
+				echo "No lossless ${lang} tracks found" 1>&2 | tee ${OUTPROMPT}
 			fi
 			FINALAUDIO="${FINALAUDIO} ${finalAudio}"
 		done
 	fi
 	# Catches edge cases where audio selection logic fails
 	if [ -z "${FINALAUDIO}" ]; then
-		echo "Audio track selection did no return any index numbers.  Selecting English and specified non-english tracks, if applicable." 1>&2 | tee /dev/tty /dev/stderr
+		echo "Audio track selection did no return any index numbers.  Selecting English and specified non-english tracks, if applicable." 1>&2 | tee ${OUTPROMPT}
 		FINALAUDIO=$(jq -r '.[] | .index' <<< "${SELECTEDAUDIO}")
 	fi
 	
@@ -287,13 +297,13 @@ audioMapping () {
 		index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
 		if [ ${compatCodec} -eq 0 ] || [ ${ENGLISHSELECTION} -eq 1 ]; then
 	                audioLoop="-map 0:a:${index} -c:a:${trackNumber} copy"
-			echo "Audio codec for track ${trackNumber} is already FOSS or widely compatible." 1>&2 | tee /dev/tty /dev/stderr
+			echo "Audio codec for track ${trackNumber} is already FOSS or widely compatible." 1>&2 | tee ${OUTPROMPT}
 			((++trackNumber))
 			echo ${audioLoop}
 		else
 			audioLoop="-map 0:a:${index} -c:a:${trackNumber} libopus -vbr on -compression_level 10 -application audio"
 			channels=$(jq --arg l ${index} '.streams[$l|fromjson].channels' <<< "${AUDIOFFPROBE}")
-			echo "Track ${trackNumber} will be converted to OPUS" 1>&2 | tee /dev/tty /dev/stderr
+			echo "Track ${trackNumber} will be converted to OPUS" 1>&2 | tee ${OUTPROMPT}
 			if [ ${channels} -gt 2 -a ${channels} -lt 6 ]; then
 				audioLoop="-mapping_family 1 -ac ${channels}"
 			fi
@@ -320,10 +330,10 @@ subMapping () {
 	noMovText=$(jq '[.streams[] | select(.codec_name == ("mov_text"))]' <<< ${SUBFFPROBE} | jq -e '. | length == 0')
 	# Checks for no subtitle track.  Common for older fansubs with burned in subtitles.
 	if [ "${EMPTYSUBJSON}" = 'true' ] || [ "${SELECTEDSUBS}" == "[]" ]; then
-		echo "No subtitles detected" 1>&2 | tee /dev/tty /dev/stderr
+		echo "No subtitles detected" 1>&2 | tee ${OUTPROMPT}
 		SUBCOMMAND="-sn"
 	elif [ "${noMovText}" = 'false' ]; then
-		echo "Converting mov_text to SRT" 1>&2 | tee /dev/tty /dev/stderr
+		echo "Converting mov_text to SRT" 1>&2 | tee ${OUTPROMPT}
 		trackNumber=0
 		SUBCOMMAND=$(while read rawIndex; do
 			index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
@@ -341,7 +351,7 @@ subMapping () {
 	else
 	# If audio language tags are not present, it is safe to assume subtitle language tags aren't either
 		SUBCOMMAND="-c:s copy"
-		echo "Mapping subtitle tracks" 1>&2 | tee /dev/tty /dev/stderr
+		echo "Mapping subtitle tracks" 1>&2 | tee ${OUTPROMPT}
 		while read rawIndex; do
 			index=$(awk "BEGIN {print ${rawIndex} - ${firstTrack}}" | bc)
 			SUBCOMMAND="${SUBCOMMAND} -map 0:s:${index}"
@@ -353,13 +363,13 @@ subMapping () {
 	firstAttachmentTrack=$(jq -r '.streams[0] | .index' <<< "${ATTACHMENTFFPROBE}" | bc)
         # Checks for attachments.  Only expected when using ASS subtitles.
         if [ "${EMPTYATTACHMENTJSON}" = 'true' ]; then
-		echo "Including all attachments, if any" 1>&2 | tee /dev/tty /dev/stderr
+		echo "Including all attachments, if any" 1>&2 | tee ${OUTPROMPT}
         	ATTACHMENTCOMMAND="-map 0:t?"
 	elif [ "${SUBCOMMAND}" = '-sn' ]; then
-		echo "No subtitle tracks, dropping all attachments" 1>&2 | tee /dev/tty /dev/stderr
+		echo "No subtitle tracks, dropping all attachments" 1>&2 | tee ${OUTPROMPT}
 		ATTACHMENTCOMMAND=""
         else
-		echo "Extracting fonts used by selected ASS tracks" 1>&2 | tee /dev/tty /dev/stderr
+		echo "Extracting fonts used by selected ASS tracks" 1>&2 | tee ${OUTPROMPT}
 		# When there are fonts, pulls in ASS sub style lines from the tracks selected
 		for subIndex in `jq '.[].index' <<< "${SELECTEDSUBS}"`; do
 			index=$(awk "BEGIN {print ${subIndex} - ${firstTrack}}" | bc)
@@ -369,7 +379,7 @@ subMapping () {
 				fonts+="${newFonts}"
 			fi
 		done
-		echo "Dumping attachments and dropping unused fonts" 1>&2 | tee /dev/tty /dev/stderr
+		echo "Dumping attachments and dropping unused fonts" 1>&2 | tee ${OUTPROMPT}
                 uniqueFonts=$(echo -e "${fonts}" | sort | uniq)
                 ATTACHMENTCOMMAND=$(while read attachmentIndex ; do
                         index=$(awk "BEGIN {print ${attachmentIndex} - ${firstAttachmentTrack}}" | bc)
@@ -626,7 +636,7 @@ generateFilterParameters () {
                 ratio=$(awk "BEGIN {print ${darRatio} * ${sarRatio}}")
                 ratioDiff=$(awk "BEGIN {print ${ratio} - 1.333}")
                 ratioDiff=${ratioDiff#-}
-                if [[ $(awk "BEGIN{print (${ratioDiff} < 0.2)}") -eq 1 ]]; then
+                if [[ $(awk "BEGIN{print (${ratioDiff} < 0.3)}") -eq 1 ]]; then
                         echo "Altering dimensions to fix aspect ratio to ~4/3"
                         h_scale=${h}
                         w_scale=$(printf "%.0f" `awk "BEGIN {print ${height} * 1.333}"`)
@@ -793,16 +803,16 @@ checkChapters () {
 	SECONDLASTCHAPTEREND=$(${ffprobe} -loglevel error -i "${inputFileCheck}" -print_format json -show_chapters | jq -r --arg l ${SECONDLASTCHAPTERENDINDEX} '[.chapters[]].[$l|fromjson]' | grep end_time | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | sed 's/\,//g' | bc)
 
 	if [ -z ${LASTCHAPTEREND} ]; then
-	        echo "${INPUTFILE} - No chapters present" 1>&2 | tee /dev/tty /dev/stderr
+	        echo "${INPUTFILE} - No chapters present" 1>&2 | tee ${OUTPROMPT}
 		echo "0"
 	elif [ ${LASTCHAPTEREND} -gt ${LENGTH} ]; then
-	        echo "Fixing bad last chapter for ${INPUTFILE}" 1>&2 | tee /dev/tty /dev/stderr
+	        echo "Fixing bad last chapter for ${INPUTFILE}" 1>&2 | tee ${OUTPROMPT}
 		echo "2"
 	elif [ ! -z ${LASTCHAPTEREND} ] && [ ${SECONDLASTCHAPTEREND} -eq ${LASTCHAPTERSTART} ] && [ ${SECONDLASTCHAPTEREND} -eq ${LASTCHAPTEREND} ]; then
-        	echo "${INPUTFILE} - Last chapter has no length.  Removing..." 1>&2 | tee /dev/tty /dev/stderr
+        	echo "${INPUTFILE} - Last chapter has no length.  Removing..." 1>&2 | tee ${OUTPROMPT}
 		echo "3"
 	else
-	        echo "${INPUTFILE} - All chapters valid" 1>&2 | tee /dev/tty /dev/stderr
+	        echo "${INPUTFILE} - All chapters valid" 1>&2 | tee ${OUTPROMPT}
 		echo "1"
 	fi
 }
