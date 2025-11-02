@@ -1,0 +1,6 @@
+toEmail="example@example.org"
+jellyfinHost="http://172.16.100.10:8096"
+jellyfinKey="apiKEYgoesHERE123"
+baseDir="/media/storage1/postProcessing"
+qsvAv1="/home/user/.local/bin/qsvAv1"
+failedDir="/media/storage1/failed"

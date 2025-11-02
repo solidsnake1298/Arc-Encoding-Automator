@@ -1,0 +1,38 @@
+#!/bin/bash
+
+## Required variables from cronEnv
+## baseDir: Where all working files are stored.  Avoid storing anything except automation related files and folders.
+
+source cronEnv
+
+sonarrPPDir="${baseDir}/sonarr"
+english="${sonarrPPDir}/englishToProcess"
+anime="${sonarrPPDir}/animeToProcess"
+korean="${sonarrPPDir}/koreanToProcess"
+chinese="${sonarrPPDir}/chineseToProcess"
+spanish="${sonarrPPDir}/spanishToProcess"
+englishQueue="${sonarrPPDir}/englishToProcessQueue"
+animeQueue="${sonarrPPDir}/animeToProcessQueue"
+koreanQueue="${sonarrPPDir}/koreanToProcessQueue"
+chineseQueue="${sonarrPPDir}/chineseToProcessQueue"
+spanishQueue="${sonarrPPDir}/spanishToProcessQueue"
+processed="${sonarrPPDir}/processed"
+processedCleared="${sonarrPPDir}/processedCleared"
+
+if [[ "${sonarr_eventtype}" == "Download" ]]; then
+	isAnime=$(echo ${sonarr_series_tags} | grep -i anime)
+	isKorean=$(echo ${sonarr_series_tags} | grep -i korean)
+	isChinese=$(echo ${sonarr_series_tags} | grep -i chinese)
+	isSpanish=$(echo ${sonarr_series_tags} | grep -i spanish)
+	if [[ ${isAnime} != "" ]]; then
+		echo "${sonarr_episodefile_path}" >> ${animeQueue}
+	elif [[ ${isKorean} != "" ]]; then
+		echo "${sonarr_episodefile_path}" >> ${koreanQueue}
+	elif [[ ${isChinese} != "" ]]; then
+		echo "${sonarr_episodefile_path}" >> ${chineseQueue}
+	elif [[ ${isSpanish} != "" ]]; then
+		echo "${sonarr_episodefile_path}" >> ${spanishQueue}
+	else
+		echo "${sonarr_episodefile_path}" >> ${englishQueue}
+	fi
+fi

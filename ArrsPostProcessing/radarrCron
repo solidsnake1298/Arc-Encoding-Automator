@@ -1,0 +1,212 @@
+#!/bin/bash
+
+## Required variables from cronEnv
+## baseDir: Where all working files are stored.  Avoid storing anything except automation related files and folders.
+## jellyfinHost: The Jellyfin instance that will be commanded to run a library scan.
+## jellyfinKey: In the Jellyfin dashboard you will need to create an API key for this script to use.
+## toEmail: The email address you wish to be notified.  Requires ssmtp be installed and setup.  Available for pretty much all distros.
+## https://wiki.debian.org/sSMTP
+## qsvAv1: The path for my qsvAv1 script.  Must provide full path in cronEnv file.
+## failedDir: The directory that files that failed to encode correctly will be placed.  Most of the time the file is just bad,
+## occasionally the file is just weird and my qsvAv1 script didn't handle it properly.
+
+source cronEnv
+
+radarrPPDir="${baseDir}/radarr"
+english="${radarrPPDir}/englishToProcess"
+anime="${radarrPPDir}/animeToProcess"
+korean="${radarrPPDir}/koreanToProcess"
+chinese="${radarrPPDir}/chineseToProcess"
+spanish="${radarrPPDir}/spanishToProcess"
+englishQueue="${radarrPPDir}/englishToProcessQueue"
+animeQueue="${radarrPPDir}/animeToProcessQueue"
+koreanQueue="${radarrPPDir}/koreanToProcessQueue"
+chineseQueue="${radarrPPDir}/chineseToProcessQueue"
+spanishQueue="${radarrPPDir}/spanishToProcessQueue"
+processed="${radarrPPDir}/processed"
+scratchDir="${baseDir}/radarrScratchDir"
+failLog="${radarrPPDir}/failed"
+refreshLibrary=0
+lockFile="${radarrPPDir}/cron.lock"
+
+if [[ -f "${lockFile}" ]]; then
+    exit 0
+else
+    touch ${lockFile}
+fi
+
+if [ -s "${animeQueue}" ]; then
+    cp -p ${animeQueue} ${anime}
+    cat /dev/null > ${animeQueue}
+    while read file ; do
+        ext=$(echo ${file} | awk -F '.' '{print $NF}')
+        ppFile=$(echo ${file} | sed "s/.${ext}/-all.mkv/g")
+        grepFilename=$(echo ${file} | sed 's/\[/\\[/g' | sed 's/\]/\\]/g')
+        grep -v "${grepFilename}" ${anime} | tee ${anime}
+        sed -i '/^$/d' ${anime}
+        finalFile=""
+        ${qsvAv1} -i "${file}" -a -w ${scratchDir} < /dev/null
+        exitCode=$?
+        if [ ${exitCode} -ne 0 ]; then
+            echo "${file}" | tee -a ${failLog}
+            filename=$(echo ${file} | awk -F '/' '{print $NF}')
+            dir=$(echo ${file} | sed "s/${filename}//g")
+            mkdir -p "${failedDir}/${dir}/"
+            mv "${file}" "${failedDir}/${dir}/"
+            rm "${ppFile}"
+        else
+            if [[ "$ext" == "mkv" ]]; then
+                finalFile="${file}"
+            else
+                finalFile=$(echo $ppFile | sed 's/-all.mkv/mkv/g')
+            fi
+            echo "${file}" | tee -a ${processed}
+            mv "${ppFile}" "${file}"
+            chgrp jellyfin "${file}"
+            chmod 640 "${file}"
+            refreshLibrary=1
+        fi
+    done <<< "$(cat ${anime})"
+fi
+if [ -s "${englishQueue}" ]; then
+    cp -p ${englishQueue} ${english}
+    cat /dev/null > ${englishQueue}
+    while read file ; do
+        ext=$(echo ${file} | awk -F '.' '{print $NF}')
+        ppFile=$(echo ${file} | sed "s/.${ext}/-all.mkv/g")
+        grepFilename=$(echo ${file} | sed 's/\[/\\[/g' | sed 's/\]/\\]/g')
+        grep -v "${grepFilename}" ${english} | tee ${english}
+        sed -i '/^$/d' ${english}
+        finalFile=""
+        ${qsvAv1} -i "${file}" -w ${scratchDir} < /dev/null
+        exitCode=$?
+        if [ ${exitCode} -ne 0 ]; then
+            echo "${file}" | tee -a ${failLog}
+            filename=$(echo ${file} | awk -F '/' '{print $NF}')
+            dir=$(echo ${file} | sed "s/${filename}//g")
+            mkdir -p "${failedDir}/${dir}/"
+            mv "${file}" "${failedDir}/${dir}/"
+            rm "${ppFile}"
+        else
+            if [[ "$ext" == "mkv" ]]; then
+                finalFile="${file}"
+            else
+                finalFile=$(echo $ppFile | sed 's/-all.mkv/mkv/g')
+            fi
+            echo "${file}" | tee -a ${processed}
+            mv "${ppFile}" "${file}"
+            chgrp jellyfin "${file}"
+            chmod 640 "${file}"
+            refreshLibrary=1
+        fi
+    done <<< "$(cat ${english})"
+fi
+if [ -s "${koreanQueue}" ]; then
+    cp -p ${koreanQueue} ${korean}
+    cat /dev/null > ${koreanQueue}
+    while read file ; do
+        ext=$(echo ${file} | awk -F '.' '{print $NF}')
+        ppFile=$(echo ${file} | sed "s/.${ext}/-all.mkv/g")
+        grepFilename=$(echo ${file} | sed 's/\[/\\[/g' | sed 's/\]/\\]/g')
+        grep -v "${grepFilename}" ${korean} | tee ${korean}
+        sed -i '/^$/d' ${korean}
+        finalFile=""
+        ${qsvAv1} -i "${file}" -k -w ${scratchDir} < /dev/null
+        exitCode=$?
+        if [ ${exitCode} -ne 0 ]; then
+            echo "${file}" | tee -a ${failLog}
+            filename=$(echo ${file} | awk -F '/' '{print $NF}')
+            dir=$(echo ${file} | sed "s/${filename}//g")
+            mkdir -p "${failedDir}/${dir}/"
+            mv "${file}" "${failedDir}/${dir}/"
+            rm "${ppFile}"
+        else
+            if [[ "$ext" == "mkv" ]]; then
+                finalFile="${file}"
+            else
+                finalFile=$(echo $ppFile | sed 's/-all.mkv/mkv/g')
+            fi
+            echo "${file}" | tee -a ${processed}
+            mv "${ppFile}" "${file}"
+            chgrp jellyfin "${file}"
+            chmod 640 "${file}"
+            refreshLibrary=1
+        fi
+    done <<< "$(cat ${korean})"
+fi
+if [ -s "${chineseQueue}" ]; then
+    cp -p ${chineseQueue} ${chinese}
+    cat /dev/null > ${chineseQueue}
+    while read file ; do
+        ext=$(echo ${file} | awk -F '.' '{print $NF}')
+        ppFile=$(echo ${file} | sed "s/.${ext}/-all.mkv/g")
+        grepFilename=$(echo ${file} | sed 's/\[/\\[/g' | sed 's/\]/\\]/g')
+        grep -v "${grepFilename}" ${chinese} | tee ${chinese}
+        sed -i '/^$/d' ${chinese}
+        finalFile=""
+        ${qsvAv1} -i "${file}" -m -w ${scratchDir} < /dev/null
+        exitCode=$?
+        if [ ${exitCode} -ne 0 ]; then
+            echo "${file}" | tee -a ${failLog}
+            filename=$(echo ${file} | awk -F '/' '{print $NF}')
+            dir=$(echo ${file} | sed "s/${filename}//g")
+            mkdir -p "${failedDir}/${dir}/"
+            mv "${file}" "${failedDir}/${dir}/"
+            rm "${ppFile}"
+        else
+            if [[ "$ext" == "mkv" ]]; then
+                finalFile="${file}"
+            else
+                finalFile=$(echo $ppFile | sed 's/-all.mkv/mkv/g')
+            fi
+            echo "${file}" | tee -a ${processed}
+            mv "${ppFile}" "${file}"
+            chgrp jellyfin "${file}"
+            chmod 640 "${file}"
+            refreshLibrary=1
+        fi
+    done <<< "$(cat ${chinese})"
+fi
+if [ -s "${spanishQueue}" ]; then
+    cp -p ${spanishQueue} ${spanish}
+    cat /dev/null > ${spanishQueue}
+    while read file ; do
+        ext=$(echo ${file} | awk -F '.' '{print $NF}')
+        ppFile=$(echo ${file} | sed "s/.${ext}/-all.mkv/g")
+        grepFilename=$(echo ${file} | sed 's/\[/\\[/g' | sed 's/\]/\\]/g')
+        grep -v "${grepFilename}" ${spanish} | tee ${spanish}
+        sed -i '/^$/d' ${spanish}
+        finalFile=""
+        ${qsvAv1} -i "${file}" -s -w ${scratchDir} < /dev/null
+        exitCode=$?
+        if [ ${exitCode} -ne 0 ]; then
+            echo "${file}" | tee -a ${failLog}
+            filename=$(echo ${file} | awk -F '/' '{print $NF}')
+            dir=$(echo ${file} | sed "s/${filename}//g")
+            mkdir -p "${failedDir}/${dir}/"
+            mv "${file}" "${failedDir}/${dir}/"
+            rm "${ppFile}"
+        else
+            if [[ "$ext" == "mkv" ]]; then
+                finalFile="${file}"
+            else
+                finalFile=$(echo $ppFile | sed 's/-all.mkv/mkv/g')
+            fi
+            echo "${file}" | tee -a ${processed}
+            mv "${ppFile}" "${file}"
+            chgrp jellyfin "${file}"
+            chmod 640 "${file}"
+            refreshLibrary=1
+        fi
+    done <<< "$(cat ${spanish})"
+fi
+
+if [ ${refreshLibrary} -eq 1 ]; then
+    printf "Subject: Radarr Post Processing\n\n***Successfully processed***\n$(cat ${processed})\n\n***Failed***\n$(cat ${failLog})" | ssmtp ${toEmail}
+    cat /dev/null > ${processed}
+    cat /dev/null > ${failLog}
+
+    curl -v -H "Authorization: MediaBrowser Token=${jellyfinKey}" -X POST ${jellyfinHost}/ScheduledTasks/Running/7738148ffcd07979c7ceb148e06b3aed
+fi
+
+rm ${lockFile}

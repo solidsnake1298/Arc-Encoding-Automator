@@ -1,0 +1,38 @@
+#!/bin/bash
+
+## Required variables from cronEnv
+## baseDir: Where all working files are stored.  Avoid storing anything except automation related files and folders.
+
+source cronEnv
+
+radarrPPDir="${baseDir}/radarr"
+english="${radarrPPDir}/englishToProcess"
+anime="${radarrPPDir}/animeToProcess"
+korean="${radarrPPDir}/koreanToProcess"
+chinese="${radarrPPDir}/chineseToProcess"
+spanish="${radarrPPDir}/spanishToProcess"
+englishQueue="${radarrPPDir}/englishToProcessQueue"
+animeQueue="${radarrPPDir}/animeToProcessQueue"
+koreanQueue="${radarrPPDir}/koreanToProcessQueue"
+chineseQueue="${radarrPPDir}/chineseToProcessQueue"
+spanishQueue="${radarrPPDir}/spanishToProcessQueue"
+processed="${radarrPPDir}/processed"
+processedCleared="${radarrPPDir}/processedCleared"
+
+if [[ "${radarr_eventtype}" == "Download" ]]; then
+	isAnime=$(echo ${radarr_movie_tags} | grep -i anime)
+	isKorean=$(echo ${radarr_movie_tags} | grep -i korean)
+	isChinese=$(echo ${radarr_movie_tags} | grep -i chinese)
+	isSpanish=$(echo ${radarr_movie_tags} | grep -i spanish)
+	if [[ ${isAnime} != "" ]]; then
+		echo "${radarr_moviefile_path}" >> ${animeQueue}
+	elif [[ ${isKorean} != "" ]]; then
+		echo "${radarr_moviefile_path}" >> ${koreanQueue}
+	elif [[ ${isChinese} != "" ]]; then
+		echo "${radarr_moviefile_path}" >> ${chineseQueue}
+	elif [[ ${isSpanish} != "" ]]; then
+		echo "${radarr_moviefile_path}" >> ${spanishQueue}
+	else
+		echo "${radarr_moviefile_path}" >> ${englishQueue}
+	fi
+fi
