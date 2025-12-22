@@ -8,6 +8,7 @@ Automates media encoding to AV1, including handling language selection, converti
 - Dolby Vision removal functionality requires Jellyfin-ffmpeg 7.0.2-4 and newer.
 - jq - Available in most package repos.
 - bc - Available in most package repos.
+- fc-scan - Available in most page repos (part of fontconfig)
 
 # Options
 - -i Input file (required)
