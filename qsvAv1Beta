@@ -261,7 +261,7 @@ audioMapping () {
 		SELECTEDAUDIO=$(jq -r '[.streams.[]]' <<< "${AUDIOFFPROBE}")
 	else
 		for lang in ${audioLanguages}; do
-			lossless=$(jq -r --arg langs "${lang}" '.[] | select(.tags.language == ($langs))'  <<< "${SELECTEDAUDIO}" | egrep -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
+			lossless=$(jq -r --arg langs "${lang}" '.[] | select(.tags.language == ($langs))'  <<< "${SELECTEDAUDIO}" | grep -E -i "dts-hd ma|truehd|flac" | grep -v "title" | head -1)
 			codec=$(echo ${lossless} | awk -F ': ' '{print $2}' | sed 's/,//g' | sed 's/\"//g')
 			echo "Finding lossless ${lang} audio tracks, if any" 1>&2 | tee ${OUTPROMPT}
 			if [ ! -z "${lossless}" ]; then 
@@ -377,18 +377,18 @@ subMapping () {
 			index=$(awk "BEGIN {print ${subIndex} - ${firstTrack}}" | bc)
 			isSubASS=$(jq --arg l ${index} '.streams[$l|fromjson] | select(.codec_name == ("ass"))' <<< ${SUBFFPROBE} | jq -e '. | length != 0')
 			if [ "${isSubASS}" = 'true' ]; then
-				newFonts=$(${ffmpeg} -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass - | egrep "^Style:" | awk -F ':' '{print $2}' | awk -F ',' '{print $2}')
-				fonts+="${newFonts}"
+				newFonts=$(${ffmpeg} -nostdin -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass - | grep -E "^Style:" | awk -F ':' '{print $2}' | awk -F ',' '{print $2}')
+				fonts+="${newFonts}"$'\n'
 			fi
 		done
 		echo "Dumping attachments and dropping unused fonts" 1>&2 | tee ${OUTPROMPT}
-                uniqueFonts=$(echo -e "${fonts}" | sort | uniq)
+                uniqueFonts=$(echo -e "${fonts}" | awk NF | sort | uniq)
                 ATTACHMENTCOMMAND=$(while read attachmentIndex ; do
                         index=$(awk "BEGIN {print ${attachmentIndex} - ${firstAttachmentTrack}}" | bc)
                         fontFileName=$(jq --arg l ${index} '.streams[$l|fromjson].tags.filename' <<< ${ATTACHMENTFFPROBE})
-                        ${ffmpeg} -v fatal -dump_attachment:t:${index} "${fontFileName}" -i "${INPUTFILE}"
-                        fontFullName=$(fc-scan "${fontFileName}" | egrep "family:|fullname:|postscriptname:" | awk -F ': ' '{print $2}')
-                        fontPresent=$(egrep "${uniqueFonts//$'\n'/|}" <<< "${fontFullName}")
+                        ${ffmpeg} -nostdin -v fatal -dump_attachment:t:${index} "${fontFileName}" -i "${INPUTFILE}"
+                        fontFullName=$(fc-scan "${fontFileName}" | grep -E "family:|fullname:|postscriptname:" | awk -F ': ' '{print $2}')
+                        fontPresent=$(grep -E "${uniqueFonts//$'\n'/|}" <<< "${fontFullName}")
                         rm -f "${fontFileName}"
                         if [[ "${fontPresent}" ]]; then
                                 echo "-map 0:t:${index}"
@@ -556,13 +556,13 @@ generateFilterParameters () {
 	frameRateNum=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $1}' | head -1 | bc)
 	frameRateDenom=$(echo ${rawParams} | grep -o 'r_frame_rate=[0-9]*/[0-9]\+' | awk -F '=' '{print $2}' | awk -F '/' '{print $2}' | head -1 | bc)
 	frameRate="${frameRateNum}/${frameRateDenom}"
-	numOfFrames=$(echo -e "${rawParams}" | egrep 'NUMBER_OF_FRAMES|nb_frames' | grep -v "N\/A" | grep "=" | awk -F '=' '{print $2}' | head -1)
+	numOfFrames=$(echo -e "${rawParams}" | grep -E 'NUMBER_OF_FRAMES|nb_frames' | grep -v "N\/A" | grep "=" | awk -F '=' '{print $2}' | head -1)
 	inputBitDepth=$(echo ${rawParams} | grep -o 'pix_fmt=[a-z,0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	sar=$(echo ${rawParams} | grep -o 'sample_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	dar=$(echo ${rawParams} | grep -o 'display_aspect_ratio=[0-9]*:[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	width=$(echo ${rawParams} | grep -o 'width=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
 	height=$(echo ${rawParams} | grep -o 'height=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
-	duration=$(echo ${rawParams} | grep -o 'duration=[0-9]\+' | awk -F '=' '{print $2}' | head -1)
+	duration=$(${ffprobe} -loglevel error -i "${inputFile}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | awk -F '.' '{print $1}' | bc)
 	setDetelecine=0
 	setSar=0
 	setScale=0
@@ -579,9 +579,17 @@ generateFilterParameters () {
 	esac
 
 	# ffmpeg to detect black bars for cropping.
-	rawCrop1=$(${ffmpeg} -ss 0 -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
-	rawCrop2=$(${ffmpeg} -ss 300 -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
-	rawCrop3=$(${ffmpeg} -ss 1800 -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+	if [ ${duration} -lt 1811 ]; then
+		midPoint=$(awk "BEGIN{print (${duration} / 2)}")
+		endPoint=$(awk "BEGIN{print (${duration} - 10)}") 
+	else
+		midPoint=300
+		endPoint=1800
+	fi
+
+	rawCrop1=$(${ffmpeg} -nostdin -ss 0 -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+	rawCrop2=$(${ffmpeg} -nostdin -ss ${midPoint} -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
+	rawCrop3=$(${ffmpeg} -nostdin -ss ${endPoint} -t 10 -i "${inputFile}" -vf fps=1/2,cropdetect=mode=black:reset=50,metadata=mode=print -f null - 2>&1 | awk '/crop=/ {a=$NF} END{print a}' | awk -F '=' '{print $2}')
 
 	IFS=$'\n'
 	w1=$(echo ${rawCrop1} | awk -F ":" '{print $1}')
@@ -679,7 +687,7 @@ generateFilterParameters () {
 			else
 				readFrames=3600
 			fi
-			rawIdet=$(${ffmpeg} -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${inputFile}" 2>&1 | egrep "Repeated Fields|frame detection" | tail -3)
+			rawIdet=$(${ffmpeg} -nostdin -filter:v idet -frames:v ${readFrames} -an -f rawvideo -y /dev/null -i "${inputFile}" 2>&1 | grep -E "Repeated Fields|frame detection" | tail -3)
 			idetProg1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
 			idetProg2=$(echo $rawIdet | grep "Multi frame detection" | tail -1 | grep -o 'Progressive: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
 			idetTFF1=$(echo $rawIdet | grep "Single frame detection" | tail -1 | grep -o 'TFF: .*[0-9] \+' | awk -F ':' '{print $2}' | awk '{print $1}' | sed 's/ //g')
@@ -854,8 +862,8 @@ repairChapters () {
 
 fixSubtitlesTimestamps () {
 	LENGTH=$(${ffprobe} -loglevel error -i "${inputFileCheck}" -print_format json -show_entries format=duration | grep duration | awk -F ': ' '{print $2}' | sed 's/\"//g' | sed 's/\.//g' | bc)
-	${ffmpeg} -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass "${WIP}/${index}.ass"
-	lastTimestamp=$(egrep "Dialogue|Comment|Picture|Sound|Movie|Command" "${WIP}/${index}.ass")
+	${ffmpeg} -nostdin -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass "${WIP}/${index}.ass"
+	lastTimestamp=$(grep -E "Dialogue|Comment|Picture|Sound|Movie|Command" "${WIP}/${index}.ass")
 }
 
 initialRemux () {
