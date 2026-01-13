@@ -377,7 +377,7 @@ subMapping () {
 			index=$(awk "BEGIN {print ${subIndex} - ${firstTrack}}" | bc)
 			isSubASS=$(jq --arg l ${index} '.streams[$l|fromjson] | select(.codec_name == ("ass"))' <<< ${SUBFFPROBE} | jq -e '. | length != 0')
 			if [ "${isSubASS}" = 'true' ]; then
-				newFonts=$(${ffmpeg} -nostdin -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass - | grep -E "^Style:" | awk -F ':' '{print $2}' | awk -F ',' '{print $2}')
+				newFonts=$(${ffmpeg} -nostdin -v error -stats -i "${remuxOutputFile}" -vn -an -map 0:s:${index} -f ass - | grep -E "^Style:" | awk -F ':' '{print $2}' | awk -F ',' '{print $2}' | sed 's/@//g')
 				fonts+="${newFonts}"$'\n'
 			fi
 		done
