@@ -566,8 +566,7 @@ generateFilterParameters () {
 	setScale=0
 	setFramerate=0
 	setProgInInterlaced=0
-	setSWScale=0
-
+	
 	# Checks for various interface types.  Uses QSV "advanced" de-interlace option if interlaced.
 	case ${interlaced} in
 	        tt) setDeinterlace=1;;
@@ -702,13 +701,12 @@ generateFilterParameters () {
 			setHWDL=1
 			setHWUL=1
 			setInFormat=1
-			if [[ ( ${largestProg} -ge 30   &&  ${repeatRatioNeither} -ge 50 ) || ( ${FORCEDETELECINE} -eq 3 && ${FORCEDETELECINE} -ne 2 && ${FORCEDETELECINE} -ne 1 ) ]]; then
+			if [[ ( ${largestProg} -ge 80   &&  ${repeatRatioNeither} -ge 80 ) || ( ${FORCEDETELECINE} -eq 3 && ${FORCEDETELECINE} -ne 2 && ${FORCEDETELECINE} -ne 1 ) ]]; then
 				echo "Progressive video with interlaced encoding detected"
 				echo "Will split fields and rejoin as progressive during encoding"
 				setProgInInterlaced=1
 				FRAMERATE="-fps_mode passthrough"
 				setDeinterlace=0
-				setSWScale=1
 			elif [[ (( ${TFFRatio} -ge 30 || ${BFFRatio} -ge 30 ) && ${repeatRatioSum} -le ${repeatRatioNeither} ) || ( ${FORCEDETELECINE} -eq 1 && ${FORCEDETELECINE} -ne 2 && ${FORCEDETELECINE} -ne 3 ) ]]; then
 				echo "Telecine detected, likely 24fps/48fps in 30fps/60fps"
 				setDetelecine=1
