@@ -490,10 +490,8 @@ generateFilters () {
 	else
 		hwDownload=""
 	fi
-	if [ ${setHWUL} -eq 1 ] && [ ${setSWScale} -eq 0 ]; then
+	if [ ${setHWUL} -eq 1 ]; then
 		hwUpload="hwupload,"
-	elif [ ${setHWUL} -eq 1 ] && [ ${setSWScale} -eq 1 ]; then
-		hwUpload="hwupload"
 	else
 		hwUpload=""
 	fi
@@ -530,26 +528,20 @@ generateFilters () {
 	fi
     if [ ${x} -eq 0 ] && [ ${y} -eq 0 ]; then
         crop=""
-	elif [ ${setSWScale} -eq 1 ]; then
-		crop="crop=${w}:${h}:${x}:${y},"
     else
         crop="vpp_qsv=cw=${w}:ch=${h}:cx=${x}:cy=${y}:scale_mode=5,"
     fi
-	if [ ${setScale} -eq 1 ] && [ ${setSWScale} -eq 0 ]; then
+	if [ ${setScale} -eq 1 ]; then 
 		scale="scale_qsv=w=${w_scale}:h=${h}:mode=hq:format=p010le"
-	elif [ ${setSWScale} -eq 1 ]; then
-		scale="scale=w=${w_scale}:h=${h},format=p010le,"
+	else
+		scale="scale_qsv=format=p010le"
 	fi
 	if [ ${setProgInInterlaced} -eq 1 ]; then
 		progInInterlaced="il=l=d:c=d,split[o][e];[o]crop=iw:ih/2:0:0[odd];[e]crop=iw:ih/2:0:ih/2[even];[odd][even]vstack,il=l=i:c=i[rejoined];[rejoined]"
 	else
 		progInInterlaced=""
 	fi
-	if [ ${setSWScale} -eq 1 ]; then
-		echo "${hwDownload}${inFormat}${progInInterlaced}${crop}${scale}${sar}${hwUpload}"
-	else
-		echo "${hwDownload}${inFormat}${progInInterlaced}${detelecine}${hwUpload}${deinterlace}${crop}${sar}${scale}"
-	fi
+	echo "${hwDownload}${inFormat}${progInInterlaced}${detelecine}${hwUpload}${deinterlace}${crop}${sar}${scale}"
 }
 
 # Probes file and generates video filters parameters
