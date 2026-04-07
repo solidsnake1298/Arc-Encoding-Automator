@@ -832,6 +832,12 @@ fixSubtitlesTimestamps () {
 }
 
 initialRemux () {
+	echo "Checking for attached images"
+	imageProbe=$(${ffprobe} -i "${INPUTFILE}" -select_streams v -show_entries stream -v quiet -of json | jq '.streams[] | select(.tags.mimetype | select (. != null) | contains("image")) | .index')
+	removeImage=""
+	if [ ! -z ${imageProbe} ]; then
+		removeImage=" -map -0:${imageProbe}"
+	fi
 	echo "Remuxing file to re-order tracks"
 	if [[ "${ext}" == "avi" ]] || [[ "${ext}" == "mpg" ]] || [[ "${ext}" == "mp4" ]] || [[ "${ext}" == "m2ts" ]] || [ "${NOEIA608}" = 'false' ]; then
         if [ "${NOMOVTEXT}" = 'false' ] && [ "${NOMSMPEG}" = 'true' ]; then
@@ -841,7 +847,7 @@ initialRemux () {
             if [ ${BADCHAPTER} -gt 1 ]; then
                 repairChapters "${INPUTFILE}" "${remuxOutputFile}"
 			else
-                ${ffmpeg} -nostdin -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+                ${ffmpeg} -nostdin -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t?${removeImage} "${remuxOutputFile}"
             fi
         elif [ "${NOEIA608}" = 'false' ]; then
             echo "Remuxing to MKV and converting EIA608 subs"
@@ -860,7 +866,7 @@ initialRemux () {
             if [ ${BADCHAPTER} -gt 1 ]; then
                 repairChapters "${INPUTFILE}" "${remuxOutputFile}"
             else
-                ${ffmpeg} -nostdin -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+                ${ffmpeg} -nostdin -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t?${removeImage} "${remuxOutputFile}"
             fi
         else
             echo "Remuxing to MKV"
@@ -869,7 +875,7 @@ initialRemux () {
             if [ ${BADCHAPTER} -gt 1 ]; then
                 repairChapters "${INPUTFILE}" "${remuxOutputFile}"
             else
-                ${ffmpeg} -nostdin -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+                ${ffmpeg} -nostdin -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t?${removeImage} "${remuxOutputFile}"
             fi
         fi
 	else
@@ -879,7 +885,7 @@ initialRemux () {
         if [ ${BADCHAPTER} -gt 1 ]; then
             repairChapters "${INPUTFILE}" "${remuxOutputFile}"
         else
-            ${ffmpeg} -nostdin -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t? "${remuxOutputFile}"
+            ${ffmpeg} -nostdin -v error -stats -fflags +genpts+igndts -y -i "${INPUTFILE}" -codec copy -map_metadata 0 -map_chapters 0 -map 0:v? -map 0:a? -map 0:s? -map 0:t?${removeImage} "${remuxOutputFile}"
         fi
 	fi
 
